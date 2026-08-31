@@ -1,0 +1,6 @@
+/ARCHIVOSPRUEBAS
+__pycache__/
+*.pyc
+venv/
+.env
+credentials.json
