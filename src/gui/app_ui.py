@@ -30,7 +30,7 @@ from src.core.matcher import build_mapping
 from src.core.extractor import extract_month_data
 from src.writers.excel_writer import write_month_data_to_excel
 from src.core.range_migrator import (
-    extract_range, extract_multi_range, get_sheet_names,
+    extract_range, extract_multi_range, get_sheet_names, match_dest_sheet,
     migrate_range, _expand_cell_tokens, MODES,
     write_block, write_stride, write_cell_list,
 )
@@ -1305,10 +1305,19 @@ class DataTravelApp(ctk.CTk):
                 for fp in src_files:
                     jobs.append((fp, None))
 
-            total   = len(jobs)
+            total       = len(jobs)
             cells_total = 0
-            failed: list[str] = []
+            failed:    list[str] = []
+            unmatched: list[str] = []   # origenes sin hoja destino encontrada
             backup_done = False
+
+            # Lista de hojas del destino (para el matcher)
+            dest_sheets_available: list[str] = []
+            if dest_mode == "Excel Local" and dest_file and dest_file.exists():
+                try:
+                    dest_sheets_available = get_sheet_names(dest_file)
+                except Exception:
+                    dest_sheets_available = []
 
             for idx, (fp, src_sheet) in enumerate(jobs):
                 label = f"{fp.name}" + (f"/{src_sheet}" if src_sheet else "")
@@ -1327,9 +1336,31 @@ class DataTravelApp(ctk.CTk):
                 if dest_mode == "Excel Local":
                     if map_mode == "Consolidar":
                         dest_sh = dest_sheet_fixed
-                    else:   # Mismo nombre -> nombre de la hoja src o nombre de archivo
-                        dest_sh = (src_sheet if src_sheet
-                                   else fp.stem)
+                    else:
+                        # Modo "Mismo nombre": usar el matcher con fuzzy matching
+                        origin_label = src_sheet if src_sheet else fp.name
+                        if dest_sheets_available:
+                            dest_sh, score = match_dest_sheet(
+                                origin_label, dest_sheets_available)
+                            if dest_sh is None:
+                                self._qlog(
+                                    "uni",
+                                    f"    Omitido: no se encontro pestana destino "
+                                    f"para '{origin_label}' "
+                                    f"(Disponibles: {dest_sheets_available})",
+                                    "warn",
+                                )
+                                unmatched.append(origin_label)
+                                self._q.put(("uni_progress", (idx + 1) / total))
+                                continue
+                            self._qlog(
+                                "uni",
+                                f"    Match: '{origin_label}' -> '{dest_sh}' "
+                                f"(score={score:.0f})",
+                            )
+                        else:
+                            # Sin hojas disponibles: usar nombre directo
+                            dest_sh = src_sheet if src_sheet else fp.stem
 
                     # Pre-visualizacion
                     if paste_mode == MODES[2]:
@@ -1402,9 +1433,10 @@ class DataTravelApp(ctk.CTk):
                 self._q.put(("uni_progress", (idx + 1) / total))
 
             self._q.put(("uni_done", {
-                "total":  total,
-                "failed": failed,
-                "cells":  cells_total,
+                "total":     total,
+                "failed":    failed,
+                "unmatched": unmatched,
+                "cells":     cells_total,
             }))
 
         except Exception as exc:
@@ -1419,25 +1451,50 @@ class DataTravelApp(ctk.CTk):
             self._uni_status.configure(
                 text="Error en la transferencia.", text_color=DANGER)
             return
-        n      = result.get("cells", 0)
-        total  = result.get("total", 0)
-        failed = result.get("failed", [])
-        all_ok = not failed
+        n         = result.get("cells", 0)
+        total     = result.get("total", 0)
+        failed    = result.get("failed", [])
+        unmatched = result.get("unmatched", [])
+        any_issue = bool(failed or unmatched)
         self._uni_bar.set(1.0)
+
+        ok_count = total - len(failed) - len(unmatched)
         self._uni_status.configure(
-            text=f"{'OK' if all_ok else 'Parcial'}: {total-len(failed)}/{total} origenes  |  {n} celdas",
-            text_color=SUCCESS if all_ok else WARNING)
+            text=f"{'OK' if not any_issue else 'Parcial'}: "
+                 f"{ok_count}/{total} origenes  |  {n} celdas"
+                 + (f"  |  {len(unmatched)} sin match" if unmatched else ""),
+            text_color=SUCCESS if not any_issue else WARNING)
+
         self._uni_log_msg("─" * 50)
+
+        # Log de no-matches en el panel
+        for u in unmatched:
+            self._uni_log_msg(
+                f"  Omitido (sin match): '{u}'", "warn")
+
         summary = (
-            f"Origenes OK : {total - len(failed)} / {total}\n"
-            f"Celdas      : {n}\n"
-            f"Modalidad   : {self._uni_mode_var.get()}"
+            f"Origenes procesados : {ok_count} / {total}\n"
+            f"Celdas escritas     : {n}\n"
+            f"Modalidad           : {self._uni_mode_var.get()}"
         )
         if failed:
-            summary += f"\nErrores     : {', '.join(failed)}"
-        fn = messagebox.showinfo if all_ok else messagebox.showwarning
-        fn("Transferencia completada" if all_ok else "Transferencia parcial",
-           ("Completado!\n\n" if all_ok else "Finalizado con errores.\n\n") + summary)
+            summary += f"\nErrores de escritura: {', '.join(failed)}"
+        if unmatched:
+            names = "\n  ".join(unmatched)
+            summary += (
+                f"\n\nHojas sin coincidencia omitidas ({len(unmatched)}):\n"
+                f"  {names}"
+            )
+
+        if not any_issue:
+            messagebox.showinfo("Transferencia completada",
+                                "Completado!\n\n" + summary)
+        else:
+            messagebox.showwarning(
+                "Transferencia " + ("con omisiones" if unmatched and not failed
+                                    else "parcial"),
+                ("Finalizado con advertencias.\n\n"
+                 if not failed else "Finalizado con errores.\n\n") + summary)
 
     def _uni_log_msg(self, msg: str, level: str = "info"):
         self._q.put(("uni_log", (msg, level)))

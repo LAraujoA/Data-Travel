@@ -227,6 +227,61 @@ def get_sheet_names(filepath: Union[str, Path]) -> list[str]:
 
 
 # ─────────────────────────────────────────────────────────────
+#  Matching de hoja destino (reutiliza matcher.py)
+# ─────────────────────────────────────────────────────────────
+
+def match_dest_sheet(
+    origin_label: str,
+    dest_sheet_names: list[str],
+    score_cutoff: float = 60.0,
+) -> tuple[str | None, float]:
+    """
+    Encuentra la hoja destino cuyo nombre normalizado mejor coincide con el
+    origen, usando la logica existente de matcher.py (rapidfuzz).
+
+    Parameters
+    ----------
+    origin_label : str
+        Nombre del archivo origen (ej: 'EL CUCO.xlsx') o nombre de hoja
+        (ej: 'US-B Carolina SM La Ceibita').
+    dest_sheet_names : list[str]
+        Hojas disponibles en el libro destino.
+    score_cutoff : float
+        Umbral minimo de similitud (0-100). Default 60.
+
+    Returns
+    -------
+    tuple[str | None, float]
+        (nombre_hoja_ganadora, puntuacion) o (None, 0.0) si no hay match.
+
+    Examples
+    --------
+    >>> match_dest_sheet("EL CUCO.xlsx", ["ElCuco", "SanPedro", "LaCeibita"])
+    ('ElCuco', 100.0)
+    >>> match_dest_sheet("US-B Carolina SM La Ceibita.xlsx", ["LaCeibita", ...])
+    ('LaCeibita', 100.0)
+    """
+    try:
+        from src.core.matcher import match_file_to_sheet
+        return match_file_to_sheet(origin_label, dest_sheet_names, score_cutoff)
+    except ImportError:
+        log.warning(
+            "matcher.py no disponible; usando comparacion exacta normalizada.")
+        # Fallback: normalizacion basica sin rapidfuzz
+        def _norm(s: str) -> str:
+            import unicodedata, re
+            nfd = unicodedata.normalize("NFD", s)
+            s = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+            s = re.sub(r"[^a-z0-9]", "", s.lower())
+            return s
+        q = _norm(origin_label)
+        for name in dest_sheet_names:
+            if _norm(name) == q:
+                return name, 100.0
+        return None, 0.0
+
+
+# ─────────────────────────────────────────────────────────────
 #  Extraccion multi-rango (expresion compuesta)
 # ─────────────────────────────────────────────────────────────
 
