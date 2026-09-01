@@ -227,6 +227,86 @@ def get_sheet_names(filepath: Union[str, Path]) -> list[str]:
 
 
 # ─────────────────────────────────────────────────────────────
+#  Extraccion multi-rango (expresion compuesta)
+# ─────────────────────────────────────────────────────────────
+
+def extract_multi_range(
+    filepath,
+    range_expr: str,
+    sheet_name=None,
+) -> list:
+    """
+    Extrae valores de una expresion de rango compuesta y devuelve lista plana.
+
+    Acepta:
+      - Un rango simple         : "C3:C13"
+      - Celdas individuales     : "C3, C4, C5"
+      - Rangos multiples        : "C3:C5, G3:G5"
+      - Mixta                   : "C3, D3:D5, H6"
+
+    El proceso es:
+      1. Dividir por comas -> lista de tokens.
+      2. Por cada token: si contiene ':' leer como rango; si no, leer celda.
+      3. Concatenar todos los valores en una lista plana.
+
+    Parameters
+    ----------
+    filepath : str | Path
+        Archivo .xlsx origen.
+    range_expr : str
+        Expresion de rango compuesta, ej: "C3:C5, G3:G5".
+    sheet_name : str | None
+        Nombre de la hoja. None = hoja activa.
+
+    Returns
+    -------
+    list
+        Lista plana de valores en el orden de los tokens.
+
+    Examples
+    --------
+    >>> extract_multi_range("report.xlsx", "D6:D8, G6:G8")
+    [4, 12, 80, 5, 25, 3]
+    >>> extract_multi_range("report.xlsx", "D6, D7, D8")
+    [4, 12, 80]
+    """
+    filepath = Path(filepath)
+    if not filepath.exists():
+        raise FileNotFoundError(f"Archivo no encontrado: {filepath}")
+
+    tokens = [t.strip().upper() for t in range_expr.split(",") if t.strip()]
+    if not tokens:
+        raise ValueError(f"Expresion de rango vacia: '{range_expr}'")
+
+    wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
+    if sheet_name:
+        if sheet_name not in wb.sheetnames:
+            wb.close()
+            raise KeyError(
+                f"Hoja '{sheet_name}' no existe. "
+                f"Disponibles: {wb.sheetnames}"
+            )
+        ws = wb[sheet_name]
+    else:
+        ws = wb.active
+
+    result: list = []
+    for tok in tokens:
+        if ":" in tok:
+            r1, c1, r2, c2 = _parse_range(tok)
+            for r in range(r1, r2 + 1):
+                for c in range(c1, c2 + 1):
+                    result.append(ws.cell(row=r, column=c).value)
+        else:
+            r, c = _parse_cell(tok)
+            result.append(ws.cell(row=r, column=c).value)
+
+    wb.close()
+    return result
+
+
+
+# ─────────────────────────────────────────────────────────────
 #  Distribucion — modalidad A: Bloque Continuo
 # ─────────────────────────────────────────────────────────────
 

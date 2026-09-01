@@ -30,7 +30,8 @@ from src.core.matcher import build_mapping
 from src.core.extractor import extract_month_data
 from src.writers.excel_writer import write_month_data_to_excel
 from src.core.range_migrator import (
-    extract_range, get_sheet_names, migrate_range, MODES,
+    extract_range, extract_multi_range, get_sheet_names,
+    migrate_range, _expand_cell_tokens, MODES,
 )
 
 # ── TEMA ──────────────────────────────────────────────────────────────────────
@@ -123,8 +124,9 @@ class DataTravelApp(ctk.CTk):
         self._poa_running    = False
 
         # Estado Migrador Universal
-        self._uni_src_file:  Optional[Path] = None
+        self._uni_src_files: list[Path] = []     # uno o varios archivos origen
         self._uni_dest_file: Optional[Path] = None
+        self._uni_sheet_vars: dict = {}           # {sheet_name: BooleanVar}
         self._uni_running    = False
 
         # Cola de mensajes compartida (se identifica con "tab")
@@ -622,7 +624,6 @@ class DataTravelApp(ctk.CTk):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True)
         scroll.columnconfigure(0, weight=1)
-
         self._uni_s1_origen(scroll)
         self._uni_s2_destino(scroll)
         self._uni_s3_modalidad(scroll)
@@ -632,50 +633,106 @@ class DataTravelApp(ctk.CTk):
     def _uni_s1_origen(self, p):
         c = _card(p); c.pack(fill="x", padx=14, pady=(12, 5))
         c.columnconfigure(1, weight=1)
-        _section_label(c, "01  ·  Origen — Archivo y Rango").grid(
+        _section_label(c, "01  ·  Origen — Archivos y Rango").grid(
             row=0, column=0, columnspan=3, sticky="w",
             padx=CARD_PAD, pady=(CARD_PAD, 4))
 
-        # Fila archivo
-        _muted(c, "Archivo:").grid(
-            row=1, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="w")
+        # ── Modo de seleccion (1 archivo / multiples) ──────────────────────
+        self._uni_src_mode = ctk.StringVar(value="Archivo Unico")
+        ctk.CTkSegmentedButton(
+            c, values=["Archivo Unico", "Multiples Archivos"],
+            variable=self._uni_src_mode,
+            command=self._uni_src_mode_change,
+            height=32, font=ctk.CTkFont(size=12),
+            selected_color=PURPLE, selected_hover_color=PURPLE_DIM,
+            unselected_color="#2D3A55",
+        ).grid(row=1, column=0, columnspan=3, sticky="w",
+               padx=CARD_PAD, pady=(0, 8))
+
+        # ── Panel Archivo Unico ────────────────────────────────────────────
+        self._uni_single_pnl = ctk.CTkFrame(c, fg_color="transparent")
+        self._uni_single_pnl.columnconfigure(1, weight=1)
+
+        _muted(self._uni_single_pnl, "Archivo:").grid(
+            row=0, column=0, padx=(0, 8), pady=(0, 6), sticky="w")
         self._uni_src_entry = _entry(
-            c, "Selecciona el archivo Excel origen (.xlsx)...")
-        self._uni_src_entry.grid(row=1, column=1, sticky="ew", pady=(0, 6))
-        _btn(c, "📂  Abrir", self._uni_select_src,
-             width=110).grid(row=1, column=2, padx=(8, CARD_PAD), pady=(0, 6))
+            self._uni_single_pnl,
+            "Selecciona el archivo Excel origen (.xlsx)...")
+        self._uni_src_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
+        bf1 = ctk.CTkFrame(self._uni_single_pnl, fg_color="transparent")
+        bf1.grid(row=0, column=2, padx=(8, 0), pady=(0, 6))
+        _btn(bf1, "📂  Abrir", self._uni_select_single,
+             width=110).pack(side="left", padx=(0, 4))
+        _btn(bf1, "🔄  Hojas", self._uni_load_src_sheets,
+             color="#2D4A6E", width=90).pack(side="left")
 
-        # Fila hoja origen
-        _muted(c, "Hoja:").grid(
-            row=2, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="w")
-        self._uni_src_sheet_var = ctk.StringVar(value="(sin archivo)")
-        self._uni_src_sheet_menu = ctk.CTkOptionMenu(
-            c, variable=self._uni_src_sheet_var, values=["(sin archivo)"],
-            width=200, height=34,
-            fg_color=ACCENT_DIM, button_color=ACCENT,
-            font=ctk.CTkFont(size=12))
-        self._uni_src_sheet_menu.grid(
-            row=2, column=1, padx=(0, 6), pady=(0, 6), sticky="w")
-        _btn(c, "🔄  Cargar hojas", self._uni_load_src_sheets,
-             color="#2D4A6E", width=130).grid(
-             row=2, column=2, padx=(8, CARD_PAD), pady=(0, 6))
+        # Sub-panel de hojas con checkboxes (ocupa fila 1)
+        _muted(self._uni_single_pnl, "Hojas:").grid(
+            row=1, column=0, padx=(0, 8), pady=(0, 4), sticky="nw")
+        self._uni_sheets_frame_outer = ctk.CTkFrame(
+            self._uni_single_pnl, fg_color="#12192A",
+            corner_radius=8, height=90)
+        self._uni_sheets_frame_outer.grid(
+            row=1, column=1, columnspan=2, sticky="ew",
+            pady=(0, 6))
+        self._uni_sheets_frame_outer.grid_propagate(False)
+        self._uni_sheets_scroll = ctk.CTkScrollableFrame(
+            self._uni_sheets_frame_outer, fg_color="transparent",
+            orientation="horizontal", height=70)
+        self._uni_sheets_scroll.pack(fill="both", expand=True, padx=6, pady=4)
 
-        # Fila rango
+        sf_btn = ctk.CTkFrame(self._uni_single_pnl, fg_color="transparent")
+        sf_btn.grid(row=2, column=1, columnspan=2, sticky="w", pady=(0, 6))
+        _btn(sf_btn, "Todas", lambda: self._uni_check_all(True),
+             color="#374151", hover="#4B5563", width=70, height=28).pack(
+             side="left", padx=(0, 4))
+        _btn(sf_btn, "Ninguna", lambda: self._uni_check_all(False),
+             color="#374151", hover="#4B5563", width=80, height=28).pack(
+             side="left")
+        self._uni_sheets_hint = _muted(sf_btn, "  (carga hojas primero)")
+        self._uni_sheets_hint.pack(side="left", padx=(8, 0))
+
+        self._uni_single_pnl.grid(
+            row=2, column=0, columnspan=3, sticky="ew",
+            padx=CARD_PAD, pady=(0, 6))
+
+        # ── Panel Multiples Archivos ───────────────────────────────────────
+        self._uni_multi_pnl = ctk.CTkFrame(c, fg_color="transparent")
+        self._uni_multi_pnl.columnconfigure(1, weight=1)
+
+        _muted(self._uni_multi_pnl, "Archivos:").grid(
+            row=0, column=0, padx=(0, 8), pady=(0, 6), sticky="nw")
+        self._uni_multi_list = ctk.CTkTextbox(
+            self._uni_multi_pnl, height=70,
+            font=ctk.CTkFont(family="Cascadia Code", size=10),
+            fg_color="#12192A", text_color="#8FD3A7",
+            corner_radius=8, state="disabled")
+        self._uni_multi_list.grid(
+            row=0, column=1, sticky="ew", pady=(0, 6))
+        _btn(self._uni_multi_pnl, "📂  Seleccionar archivos",
+             self._uni_select_multi,
+             width=175).grid(row=0, column=2, padx=(8, 0), pady=(0, 6), sticky="n")
+        self._uni_multi_count = _muted(self._uni_multi_pnl, "0 archivos seleccionados")
+        self._uni_multi_count.grid(
+            row=1, column=1, sticky="w", pady=(0, 6))
+
+        # (no se muestra hasta que se active "Multiples Archivos")
+
+        # ── Rango de origen ────────────────────────────────────────────────
         _muted(c, "Rango:").grid(
             row=3, column=0, padx=(CARD_PAD, 8), pady=(0, CARD_PAD), sticky="w")
         rf = ctk.CTkFrame(c, fg_color="transparent")
         rf.grid(row=3, column=1, columnspan=2, sticky="ew",
                 pady=(0, CARD_PAD), padx=(0, CARD_PAD))
-        rf.columnconfigure(0, weight=0)
-        rf.columnconfigure(2, weight=1)
-        self._uni_range_entry = _entry(rf, "ej: C3:C13", width=130)
+        self._uni_range_entry = _entry(
+            rf, "ej: D6:D15  o  D6:D10, G6:G10  o  D6, D7, D8", width=270)
         self._uni_range_entry.pack(side="left")
         self._uni_preview_btn = _btn(
-            rf, "👁  Previsualizar", self._uni_preview_range,
-            color="#374151", hover="#4B5563", width=140)
+            rf, "👁  Vista previa", self._uni_preview_range,
+            color="#374151", hover="#4B5563", width=135)
         self._uni_preview_btn.pack(side="left", padx=(10, 0))
         self._uni_range_info = _muted(rf, "")
-        self._uni_range_info.pack(side="left", padx=(12, 0))
+        self._uni_range_info.pack(side="left", padx=(10, 0))
 
     # ── U2 Destino ────────────────────────────────────────────────────────────
     def _uni_s2_destino(self, p):
@@ -696,45 +753,73 @@ class DataTravelApp(ctk.CTk):
         ).grid(row=1, column=0, columnspan=3, sticky="w",
                padx=CARD_PAD, pady=(0, 8))
 
-        # Panel Excel destino
+        # ── Panel Excel ────────────────────────────────────────────────────
         self._uni_excel_pnl = ctk.CTkFrame(c, fg_color="transparent")
-        self._uni_excel_pnl.grid(row=2, column=0, columnspan=3,
-                                  sticky="ew", padx=0, pady=0)
         self._uni_excel_pnl.columnconfigure(1, weight=1)
+        self._uni_excel_pnl.grid(
+            row=2, column=0, columnspan=3, sticky="ew", padx=0, pady=0)
 
         _muted(self._uni_excel_pnl, "Archivo:").grid(
             row=0, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="w")
         self._uni_dest_entry = _entry(
             self._uni_excel_pnl, "Archivo Excel destino (.xlsx)...")
         self._uni_dest_entry.grid(row=0, column=1, sticky="ew", pady=(0, 6))
-        _btn(self._uni_excel_pnl, "📄  Seleccionar",
-             self._uni_select_dest, width=130).grid(
-             row=0, column=2, padx=(8, CARD_PAD), pady=(0, 6))
+        bf_d = ctk.CTkFrame(self._uni_excel_pnl, fg_color="transparent")
+        bf_d.grid(row=0, column=2, padx=(8, CARD_PAD), pady=(0, 6))
+        _btn(bf_d, "📄  Seleccionar",
+             self._uni_select_dest, width=130).pack(side="left", padx=(0, 4))
+        _btn(bf_d, "🔄  Hojas",
+             self._uni_load_dest_sheets, color="#2D4A6E", width=90).pack(side="left")
 
-        _muted(self._uni_excel_pnl, "Hoja destino:").grid(
-            row=1, column=0, padx=(CARD_PAD, 8), pady=(0, CARD_PAD), sticky="w")
-        self._uni_dest_sheet_var = ctk.StringVar(value="(sin archivo)")
+        # Fila: Logica de hoja destino (nueva)
+        _muted(self._uni_excel_pnl, "Mapeo:").grid(
+            row=1, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="nw")
+
+        self._uni_dest_map_mode = ctk.StringVar(value="Mismo nombre")
+        map_frame = ctk.CTkFrame(self._uni_excel_pnl, fg_color="transparent")
+        map_frame.grid(row=1, column=1, columnspan=2, sticky="ew",
+                       padx=(0, CARD_PAD), pady=(0, 6))
+
+        ctk.CTkRadioButton(
+            map_frame,
+            text="Mapear a pestana con el mismo nombre",
+            variable=self._uni_dest_map_mode,
+            value="Mismo nombre",
+            command=self._uni_map_mode_change,
+            font=ctk.CTkFont(size=12),
+            fg_color=PURPLE, hover_color=PURPLE_DIM,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+
+        ctk.CTkRadioButton(
+            map_frame,
+            text="Consolidar en una sola pestana:",
+            variable=self._uni_dest_map_mode,
+            value="Consolidar",
+            command=self._uni_map_mode_change,
+            font=ctk.CTkFont(size=12),
+            fg_color=PURPLE, hover_color=PURPLE_DIM,
+        ).grid(row=1, column=0, sticky="w")
+
+        self._uni_dest_sheet_var = ctk.StringVar(value="")
         self._uni_dest_sheet_menu = ctk.CTkOptionMenu(
-            self._uni_excel_pnl,
+            map_frame,
             variable=self._uni_dest_sheet_var,
-            values=["(sin archivo)"],
-            width=200, height=32,
+            values=["(carga el destino primero)"],
+            width=210, height=30,
             fg_color=PURPLE_DIM, button_color=PURPLE,
-            font=ctk.CTkFont(size=12))
+            font=ctk.CTkFont(size=11),
+            state="disabled",
+        )
         self._uni_dest_sheet_menu.grid(
-            row=1, column=1, padx=(0, 6), pady=(0, CARD_PAD), sticky="w")
-        _btn(self._uni_excel_pnl, "🔄  Cargar hojas",
-             self._uni_load_dest_sheets,
-             color="#2D4A6E", width=130).grid(
-             row=1, column=2, padx=(8, CARD_PAD), pady=(0, CARD_PAD))
+            row=1, column=1, padx=(10, 0), sticky="w")
 
-        # Panel Sheets destino (oculto)
+        # ── Panel Sheets ───────────────────────────────────────────────────
         self._uni_sheets_pnl = ctk.CTkFrame(c, fg_color="transparent")
         self._uni_sheets_pnl.columnconfigure(1, weight=1)
         _muted(self._uni_sheets_pnl, "URL / ID:").grid(
             row=0, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="w")
         self._uni_sheets_url = _entry(
-            self._uni_sheets_pnl, "https://docs.google.com/...")
+            self._uni_sheets_pnl, "https://docs.google.com/spreadsheets/d/...")
         self._uni_sheets_url.grid(
             row=0, column=1, columnspan=2, sticky="ew",
             padx=(0, CARD_PAD), pady=(0, 6))
@@ -742,8 +827,7 @@ class DataTravelApp(ctk.CTk):
             row=1, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="w")
         self._uni_sheets_tab = _entry(
             self._uni_sheets_pnl, "Nombre de la hoja", width=200)
-        self._uni_sheets_tab.grid(
-            row=1, column=1, sticky="w", pady=(0, 6))
+        self._uni_sheets_tab.grid(row=1, column=1, sticky="w", pady=(0, 6))
         _muted(self._uni_sheets_pnl, "Credenciales:").grid(
             row=2, column=0, padx=(CARD_PAD, 8), pady=(0, CARD_PAD), sticky="w")
         self._uni_creds_entry = _entry(
@@ -773,63 +857,65 @@ class DataTravelApp(ctk.CTk):
         ).grid(row=1, column=0, columnspan=4, sticky="ew",
                padx=CARD_PAD, pady=(0, 10))
 
-        # Panel A — Bloque Continuo
+        # ── Panel A: Bloque Continuo ───────────────────────────────────────
         self._uni_pnl_block = ctk.CTkFrame(c, fg_color="transparent")
-        self._uni_pnl_block.grid(row=2, column=0, columnspan=4,
-                                  sticky="ew", padx=CARD_PAD, pady=(0, CARD_PAD))
+        self._uni_pnl_block.grid(
+            row=2, column=0, columnspan=4, sticky="ew",
+            padx=CARD_PAD, pady=(0, CARD_PAD))
         _muted(self._uni_pnl_block, "Celda de inicio:").pack(side="left")
         self._uni_start_cell = _entry(
-            self._uni_pnl_block, "ej: B5", width=100)
+            self._uni_pnl_block,
+            placeholder="ej: B5",
+            width=100)
         self._uni_start_cell.pack(side="left", padx=(8, 0))
-        self._uni_start_cell.insert(0, "A1")
-        _muted(self._uni_pnl_block, "  — La matriz se pega a partir de esta celda.").pack(
-            side="left", padx=(12, 0))
+        _muted(self._uni_pnl_block,
+               "  — La matriz se pega a partir de esta celda.").pack(
+               side="left", padx=(12, 0))
 
-        # Panel B — Salto
+        # ── Panel B: Salto ─────────────────────────────────────────────────
         self._uni_pnl_stride = ctk.CTkFrame(c, fg_color="transparent")
-        self._uni_pnl_stride.columnconfigure(1, weight=0)
-        row_s = self._uni_pnl_stride
 
-        _muted(row_s, "Celda inicio:").grid(
+        _muted(self._uni_pnl_stride, "Celda inicio:").grid(
             row=0, column=0, padx=(0, 8), pady=(0, 4), sticky="w")
-        self._uni_stride_start = _entry(row_s, "ej: C20", width=100)
+        self._uni_stride_start = _entry(
+            self._uni_pnl_stride, placeholder="ej: C20", width=100)
         self._uni_stride_start.grid(row=0, column=1, padx=(0, 16), pady=(0, 4))
-        self._uni_stride_start.insert(0, "A1")
 
-        _muted(row_s, "Dirección:").grid(
+        _muted(self._uni_pnl_stride, "Direccion:").grid(
             row=0, column=2, padx=(0, 8), pady=(0, 4), sticky="w")
         self._uni_dir_var = ctk.StringVar(value="Horizontal")
         ctk.CTkSegmentedButton(
-            row_s, values=["Horizontal", "Vertical"],
+            self._uni_pnl_stride,
+            values=["Horizontal", "Vertical"],
             variable=self._uni_dir_var,
             width=200, height=30, font=ctk.CTkFont(size=12),
             selected_color=PURPLE, selected_hover_color=PURPLE_DIM,
             unselected_color="#2D3A55",
         ).grid(row=0, column=3, padx=(0, 16), pady=(0, 4))
 
-        _muted(row_s, "Salto (N):").grid(
+        _muted(self._uni_pnl_stride, "Salto (N):").grid(
             row=0, column=4, padx=(0, 8), pady=(0, 4), sticky="w")
-        self._uni_stride_n = _entry(row_s, "ej: 7", width=70)
+        self._uni_stride_n = _entry(
+            self._uni_pnl_stride, placeholder="ej: 7", width=70)
         self._uni_stride_n.grid(row=0, column=5, pady=(0, 4))
-        self._uni_stride_n.insert(0, "1")
 
-        _muted(row_s,
-               "\n  Ejemplo: inicio=C20, Horizontal, salto=7 → C20 → J20 → Q20 ...").grid(
+        _muted(self._uni_pnl_stride,
+               "Ejemplo: inicio=C20, Horizontal, salto=7  ->  C20 -> J20 -> Q20 ...").grid(
             row=1, column=0, columnspan=6, sticky="w", pady=(2, 6))
 
-        # Panel C — Lista
+        # ── Panel C: Lista ─────────────────────────────────────────────────
         self._uni_pnl_list = ctk.CTkFrame(c, fg_color="transparent")
         self._uni_pnl_list.columnconfigure(1, weight=1)
         _muted(self._uni_pnl_list, "Celdas:").grid(
             row=0, column=0, padx=(0, 8), pady=(0, 4), sticky="w")
         self._uni_cell_list = _entry(
-            self._uni_pnl_list, "ej: C20, G20, K20, Q20")
+            self._uni_pnl_list,
+            placeholder="ej: C20, G20, K20  o  C20:C22, G20:G22")
         self._uni_cell_list.grid(row=0, column=1, sticky="ew", pady=(0, 4))
         _muted(self._uni_pnl_list,
-               "Separa con comas. Cada valor del rango va a la celda correspondiente.").grid(
+               "Separa con comas. Acepta celdas simples y rangos mezclados.").grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
-        # Mostrar panel activo
         self._uni_mode_change(MODES[0])
 
     # ── U4 Ejecucion ──────────────────────────────────────────────────────────
@@ -856,7 +942,7 @@ class DataTravelApp(ctk.CTk):
         self._uni_status.grid(row=3, column=0, sticky="w",
                               padx=CARD_PAD, pady=(0, 6))
         self._uni_log = ctk.CTkTextbox(
-            c, height=140,
+            c, height=155,
             font=ctk.CTkFont(family="Cascadia Code", size=11),
             fg_color="#0D1117", text_color="#C4B5FD",
             corner_radius=8, wrap="word", state="disabled")
@@ -867,25 +953,93 @@ class DataTravelApp(ctk.CTk):
              width=120, height=28).grid(
              row=5, column=0, sticky="e", padx=CARD_PAD, pady=(0, CARD_PAD))
 
-    # ── Logica Universal ──────────────────────────────────────────────────────
-    def _uni_mode_change(self, val):
-        for pnl in (self._uni_pnl_block,
-                    self._uni_pnl_stride,
-                    self._uni_pnl_list):
-            pnl.grid_forget()
-        if val == MODES[0]:       # Bloque Continuo
-            self._uni_pnl_block.grid(row=2, column=0, columnspan=4,
-                                      sticky="ew", padx=CARD_PAD,
-                                      pady=(0, CARD_PAD))
-        elif val == MODES[1]:     # Salto
-            self._uni_pnl_stride.grid(row=2, column=0, columnspan=4,
-                                       sticky="ew", padx=CARD_PAD,
-                                       pady=(0, CARD_PAD))
-        else:                     # Lista
-            self._uni_pnl_list.grid(row=2, column=0, columnspan=4,
-                                     sticky="ew", padx=CARD_PAD,
-                                     pady=(0, CARD_PAD))
+    # ── Logica: modo fuente ───────────────────────────────────────────────────
+    def _uni_src_mode_change(self, val):
+        if val == "Archivo Unico":
+            self._uni_multi_pnl.grid_forget()
+            self._uni_single_pnl.grid(
+                row=2, column=0, columnspan=3, sticky="ew",
+                padx=CARD_PAD, pady=(0, 6))
+        else:
+            self._uni_single_pnl.grid_forget()
+            self._uni_multi_pnl.grid(
+                row=2, column=0, columnspan=3, sticky="ew",
+                padx=CARD_PAD, pady=(0, 6))
 
+    # ── Logica: selector archivos ─────────────────────────────────────────────
+    def _uni_select_single(self):
+        p = filedialog.askopenfilename(
+            title="Selecciona el archivo origen",
+            filetypes=[("Excel", "*.xlsx *.xls"), ("Todos", "*.*")])
+        if p:
+            self._uni_src_files = [Path(p)]
+            self._uni_src_entry.delete(0, "end")
+            self._uni_src_entry.insert(0, str(self._uni_src_files[0]))
+            self._uni_load_src_sheets()
+
+    def _uni_select_multi(self):
+        paths = filedialog.askopenfilenames(
+            title="Selecciona los archivos Excel origen",
+            filetypes=[("Excel", "*.xlsx *.xls"), ("Todos", "*.*")])
+        if paths:
+            self._uni_src_files = [Path(p) for p in paths]
+            names = [p.name for p in self._uni_src_files]
+            self._uni_multi_list.configure(state="normal")
+            self._uni_multi_list.delete("1.0", "end")
+            self._uni_multi_list.insert("end", "\n".join(names))
+            self._uni_multi_list.configure(state="disabled")
+            self._uni_multi_count.configure(
+                text=f"{len(self._uni_src_files)} archivo(s) seleccionado(s)",
+                text_color=SUCCESS)
+            self._uni_log_msg(f"Multi-archivo: {len(self._uni_src_files)} archivos.")
+
+    # ── Logica: hojas con checkboxes ──────────────────────────────────────────
+    def _uni_load_src_sheets(self):
+        v = self._uni_src_entry.get().strip()
+        if v:
+            f = Path(v)
+            if f.exists():
+                self._uni_src_files = [f]
+        if not self._uni_src_files or not self._uni_src_files[0].exists():
+            messagebox.showwarning("Archivo no encontrado",
+                "Selecciona primero un archivo origen valido.")
+            return
+        try:
+            names = get_sheet_names(self._uni_src_files[0])
+            self._uni_build_sheet_checkboxes(names)
+            self._uni_sheets_hint.configure(
+                text=f"  {len(names)} hoja(s) encontrada(s)",
+                text_color=SUCCESS)
+            self._uni_log_msg(f"Hojas cargadas: {names}")
+        except Exception as exc:
+            messagebox.showerror("Error al leer hojas", str(exc))
+
+    def _uni_build_sheet_checkboxes(self, sheet_names: list[str]):
+        # Limpiar checkboxes anteriores
+        for w in self._uni_sheets_scroll.winfo_children():
+            w.destroy()
+        self._uni_sheet_vars = {}
+        for name in sheet_names:
+            var = ctk.BooleanVar(value=True)
+            self._uni_sheet_vars[name] = var
+            ctk.CTkCheckBox(
+                self._uni_sheets_scroll,
+                text=name,
+                variable=var,
+                font=ctk.CTkFont(size=11),
+                fg_color=PURPLE, hover_color=PURPLE_DIM,
+                checkmark_color="white",
+                width=15, height=15,
+            ).pack(side="left", padx=(0, 10), pady=4)
+
+    def _uni_check_all(self, state: bool):
+        for var in self._uni_sheet_vars.values():
+            var.set(state)
+
+    def _uni_get_selected_sheets(self) -> list[str]:
+        return [name for name, var in self._uni_sheet_vars.items() if var.get()]
+
+    # ── Logica: destino ───────────────────────────────────────────────────────
     def _uni_dest_change(self, val):
         if val == "Excel Local":
             self._uni_sheets_pnl.grid_forget()
@@ -896,31 +1050,11 @@ class DataTravelApp(ctk.CTk):
             self._uni_sheets_pnl.grid(row=2, column=0, columnspan=3,
                                        sticky="ew")
 
-    def _uni_select_src(self):
-        p = filedialog.askopenfilename(
-            title="Selecciona el archivo origen",
-            filetypes=[("Excel", "*.xlsx *.xls"), ("Todos", "*.*")])
-        if p:
-            self._uni_src_file = Path(p)
-            self._uni_src_entry.delete(0, "end")
-            self._uni_src_entry.insert(0, str(self._uni_src_file))
-            self._uni_load_src_sheets()
-
-    def _uni_load_src_sheets(self):
-        v = self._uni_src_entry.get().strip()
-        if v:
-            self._uni_src_file = Path(v)
-        if not self._uni_src_file or not self._uni_src_file.exists():
-            messagebox.showwarning("Archivo no encontrado",
-                "Selecciona primero un archivo origen valido.")
-            return
-        try:
-            names = get_sheet_names(self._uni_src_file)
-            self._uni_src_sheet_menu.configure(values=names)
-            self._uni_src_sheet_var.set(names[0])
-            self._uni_log_msg(f"📋 Hojas origen: {names}")
-        except Exception as exc:
-            messagebox.showerror("Error", str(exc))
+    def _uni_map_mode_change(self):
+        if self._uni_dest_map_mode.get() == "Consolidar":
+            self._uni_dest_sheet_menu.configure(state="normal")
+        else:
+            self._uni_dest_sheet_menu.configure(state="disabled")
 
     def _uni_select_dest(self):
         p = filedialog.askopenfilename(
@@ -944,7 +1078,7 @@ class DataTravelApp(ctk.CTk):
             names = get_sheet_names(self._uni_dest_file)
             self._uni_dest_sheet_menu.configure(values=names)
             self._uni_dest_sheet_var.set(names[0])
-            self._uni_log_msg(f"📋 Hojas destino: {names}")
+            self._uni_log_msg(f"Hojas destino: {names}")
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 
@@ -956,54 +1090,142 @@ class DataTravelApp(ctk.CTk):
             self._uni_creds_entry.delete(0, "end")
             self._uni_creds_entry.insert(0, p)
 
+    # ── Logica: modalidad ─────────────────────────────────────────────────────
+    def _uni_mode_change(self, val):
+        for pnl in (self._uni_pnl_block,
+                    self._uni_pnl_stride,
+                    self._uni_pnl_list):
+            pnl.grid_forget()
+        if val == MODES[0]:
+            self._uni_pnl_block.grid(
+                row=2, column=0, columnspan=4, sticky="ew",
+                padx=CARD_PAD, pady=(0, CARD_PAD))
+        elif val == MODES[1]:
+            self._uni_pnl_stride.grid(
+                row=2, column=0, columnspan=4, sticky="ew",
+                padx=CARD_PAD, pady=(0, CARD_PAD))
+        else:
+            self._uni_pnl_list.grid(
+                row=2, column=0, columnspan=4, sticky="ew",
+                padx=CARD_PAD, pady=(0, CARD_PAD))
+
+    # ── Vista previa del rango ────────────────────────────────────────────────
     def _uni_preview_range(self):
-        v_src  = self._uni_src_entry.get().strip()
-        v_rng  = self._uni_range_entry.get().strip()
-        v_shee = self._uni_src_sheet_var.get()
-        if not v_src or not v_rng:
-            messagebox.showwarning("Datos incompletos",
-                "Selecciona archivo origen y escribe el rango.")
+        src_files = self._get_uni_src_files()
+        v_rng = self._uni_range_entry.get().strip()
+        if not src_files:
+            messagebox.showwarning("Sin archivo origen",
+                "Selecciona al menos un archivo origen.")
+            return
+        if not v_rng:
+            messagebox.showwarning("Sin rango",
+                "Escribe el rango de origen.")
             return
         try:
-            src = Path(v_src)
-            sheet = v_shee if v_shee not in ("(sin archivo)", "") else None
-            matrix = extract_range(src, v_rng, sheet)
-            rows = len(matrix)
-            cols = len(matrix[0]) if matrix else 0
-            flat = [v for row in matrix for v in row]
-            self._uni_range_info.configure(
-                text=f"{rows}×{cols}  ({len(flat)} valores)",
-                text_color="#C4B5FD")
-            preview = str(flat[:8])
-            if len(flat) > 8:
+            sheet = self._get_uni_src_sheet_for_preview(src_files[0])
+            values = extract_multi_range(src_files[0], v_rng, sheet)
+            n = len(values)
+            preview = str(values[:8])
+            if n > 8:
                 preview = preview[:-1] + ", ...]"
+            self._uni_range_info.configure(
+                text=f"{n} valores",
+                text_color="#C4B5FD")
             self._uni_log_msg(
-                f"👁 Rango '{v_rng}': {rows} filas × {cols} cols  "
-                f"→ primeros valores: {preview}")
+                f"Vista previa '{v_rng}': {n} valores  ->  {preview}")
         except Exception as exc:
             messagebox.showerror("Error al leer rango", str(exc))
 
+    def _get_uni_src_files(self) -> list[Path]:
+        if self._uni_src_mode.get() == "Archivo Unico":
+            v = self._uni_src_entry.get().strip()
+            if v:
+                f = Path(v)
+                if f.exists():
+                    self._uni_src_files = [f]
+            return self._uni_src_files
+        else:
+            return self._uni_src_files
+
+    def _get_uni_src_sheet_for_preview(self, fp: Path):
+        """Retorna la primera hoja seleccionada (o None)."""
+        if self._uni_sheet_vars:
+            sel = self._get_selected_sheets()
+            return sel[0] if sel else None
+        return None
+
+    # ── Validacion de campos obligatorios ─────────────────────────────────────
+    def _uni_validate(self) -> tuple[bool, str]:
+        """Retorna (valido, mensaje_error)."""
+        mode = self._uni_mode_var.get()
+
+        if mode == MODES[0]:   # Bloque Continuo
+            v = self._uni_start_cell.get().strip()
+            if not v:
+                return False, (
+                    "Modalidad Bloque Continuo requiere una celda de inicio. "
+                    "Por favor ingresa la celda de inicio (ej: B5).")
+        elif mode == MODES[1]:  # Salto
+            v1 = self._uni_stride_start.get().strip()
+            v2 = self._uni_stride_n.get().strip()
+            if not v1:
+                return False, (
+                    "Modalidad Salto requiere la celda de inicio. "
+                    "Por favor ingresa la celda de inicio (ej: C20).")
+            if not v2:
+                return False, (
+                    "Modalidad Salto requiere el numero de salto (N). "
+                    "Por favor ingresa el salto (ej: 7).")
+            try:
+                int(v2)
+            except ValueError:
+                return False, f"El salto debe ser un numero entero, no '{v2}'."
+        else:  # Lista de Celdas
+            v = self._uni_cell_list.get().strip()
+            if not v:
+                return False, (
+                    "Modalidad Lista de Celdas requiere al menos una celda. "
+                    "Por favor ingresa las celdas destino (ej: C20, G20, K20).")
+            try:
+                _expand_cell_tokens(v)
+            except ValueError as e:
+                return False, f"Lista de celdas invalida: {e}"
+
+        # Validar rango origen
+        v_rng = self._uni_range_entry.get().strip()
+        if not v_rng:
+            return False, "Por favor ingresa el rango de origen (ej: D6:D15)."
+
+        return True, ""
+
+    # ── Transferencia ─────────────────────────────────────────────────────────
     def _uni_on_transfer(self):
         if self._uni_running:
             return
-        mode = self._uni_dest_mode.get()
 
-        # Validar origen
-        v_src = self._uni_src_entry.get().strip()
-        if v_src:
-            self._uni_src_file = Path(v_src)
-        if not self._uni_src_file or not self._uni_src_file.exists():
+        # Recoger y validar archivos origen
+        src_files = self._get_uni_src_files()
+        if not src_files:
             messagebox.showwarning("Origen requerido",
-                "Selecciona un archivo Excel origen valido.")
+                "Selecciona al menos un archivo Excel origen.")
             return
 
         v_rng = self._uni_range_entry.get().strip()
         if not v_rng:
             messagebox.showwarning("Rango requerido",
-                "Escribe el rango de origen (ej: C3:C13).")
+                "Escribe el rango de origen (ej: D6:D15).")
             return
 
-        if mode == "Excel Local":
+        # Validar campos de modalidad (Bug 4 — seguridad)
+        ok, msg = self._uni_validate()
+        if not ok:
+            messagebox.showwarning(
+                "Configuracion incompleta", msg)
+            return
+
+        # Validar destino
+        dest_mode = self._uni_dest_mode.get()
+        if dest_mode == "Excel Local":
             v_dest = self._uni_dest_entry.get().strip()
             if v_dest:
                 self._uni_dest_file = Path(v_dest)
@@ -1011,166 +1233,202 @@ class DataTravelApp(ctk.CTk):
                 messagebox.showwarning("Destino requerido",
                     "Selecciona un archivo Excel destino valido.")
                 return
-            dest_sheet = self._uni_dest_sheet_var.get()
-            if dest_sheet in ("(sin archivo)", ""):
-                messagebox.showwarning("Hoja requerida",
-                    "Selecciona la hoja destino.")
-                return
+
+        # Construir parametros
+        mode_paste = self._uni_mode_var.get()
+        start_cell = (self._uni_stride_start.get().strip()
+                      if mode_paste == MODES[1]
+                      else self._uni_start_cell.get().strip())
+        try:
+            stride = max(1, int(self._uni_stride_n.get().strip() or "1"))
+        except ValueError:
+            stride = 1
+
+        # Hojas seleccionadas (modo unico) o None para multi-archivo
+        if self._uni_src_mode.get() == "Archivo Unico":
+            selected_sheets = self._get_selected_sheets() or [None]
+        else:
+            selected_sheets = [None]  # usa hoja activa de cada archivo
+
+        params = {
+            "src_files":    src_files,
+            "selected_sheets": selected_sheets,
+            "src_range":    v_rng,
+            "dest_mode":    dest_mode,
+            "paste_mode":   mode_paste,
+            "start_cell":   start_cell or "A1",
+            "direction":    self._uni_dir_var.get(),
+            "stride":       stride,
+            "cell_list":    self._uni_cell_list.get().strip(),
+            "dest_file":    self._uni_dest_file,
+            "dest_sheet":   self._uni_dest_sheet_var.get(),
+            "map_mode":     self._uni_dest_map_mode.get(),
+            "dest_file_name": (self._uni_dest_file.name
+                               if self._uni_dest_file else ""),
+            "sheets_url":   self._uni_sheets_url.get().strip(),
+            "sheets_tab":   (self._uni_sheets_tab.get().strip()
+                             if hasattr(self, "_uni_sheets_tab") else ""),
+        }
 
         self._uni_running = True
         self._uni_run_btn.configure(state="disabled", text="⏳  Procesando...")
         self._uni_bar.set(0)
         self._uni_status.configure(text="Migrando rango...", text_color=PURPLE)
-
-        params = {
-            "src_file":   self._uni_src_file,
-            "src_range":  v_rng,
-            "src_sheet":  (self._uni_src_sheet_var.get()
-                           if self._uni_src_sheet_var.get()
-                           not in ("(sin archivo)", "") else None),
-            "dest_mode":  mode,
-            "paste_mode": self._uni_mode_var.get(),
-            "start_cell": self._uni_start_cell.get().strip() or "A1",
-            "stride_start": self._uni_stride_start.get().strip() or "A1",
-            "direction":  self._uni_dir_var.get(),
-            "stride":     self._uni_stride_n.get().strip(),
-            "cell_list":  self._uni_cell_list.get().strip(),
-        }
-        if mode == "Excel Local":
-            params["dest_file"]  = self._uni_dest_file
-            params["dest_sheet"] = self._uni_dest_sheet_var.get()
-        else:
-            params["sheets_url"]   = self._uni_sheets_url.get().strip()
-            params["sheets_tab"]   = self._uni_sheets_tab.get().strip()
-            params["sheets_creds"] = self._uni_creds_entry.get().strip()
+        self._uni_log_msg("─" * 50)
 
         threading.Thread(target=self._uni_worker,
                          args=(params,), daemon=True).start()
 
     def _uni_worker(self, p: dict):
         try:
-            # Parsear stride
-            try:
-                stride = max(1, int(p["stride"]))
-            except (ValueError, TypeError):
-                stride = 1
+            src_files:   list[Path] = p["src_files"]
+            sel_sheets:  list       = p["selected_sheets"]
+            v_rng:       str        = p["src_range"]
+            paste_mode:  str        = p["paste_mode"]
+            start_cell:  str        = p["start_cell"]
+            direction:   str        = p["direction"]
+            stride:      int        = p["stride"]
+            cell_list:   str        = p["cell_list"]
+            dest_mode:   str        = p["dest_mode"]
+            map_mode:    str        = p["map_mode"]
+            dest_file:   Path       = p["dest_file"]
+            dest_sheet_fixed: str   = p["dest_sheet"]
+            dest_name:   str        = p["dest_file_name"]
 
-            # Celda de inicio segun modo
-            start_cell = (p["stride_start"] if p["paste_mode"] == MODES[1]
-                          else p["start_cell"])
+            # Calcular pares (archivo, hoja)
+            jobs: list[tuple[Path, str | None]] = []
+            if len(src_files) == 1:
+                for sh in sel_sheets:
+                    jobs.append((src_files[0], sh if sh else None))
+            else:
+                for fp in src_files:
+                    jobs.append((fp, None))
 
-            self._qlog("uni",
-                f"📐 Rango origen : {p['src_range']}")
-            self._qlog("uni",
-                f"🎯 Modalidad    : {p['paste_mode']}")
+            total   = len(jobs)
+            cells_total = 0
+            failed: list[str] = []
+            backup_done = False
 
-            if p["dest_mode"] == "Excel Local":
-                dest_sheet = p["dest_sheet"]
-                self._qlog("uni",
-                    f"📄 Destino      : {Path(p['dest_file']).name} → '{dest_sheet}'")
+            for idx, (fp, src_sheet) in enumerate(jobs):
+                label = f"{fp.name}" + (f"/{src_sheet}" if src_sheet else "")
+                self._qlog("uni", f"  [{idx+1}/{total}]  {label}  | rango: {v_rng}")
+                self._q.put(("uni_progress", (idx) / total))
 
-                # Pre-visualizacion de celdas destino (usa el mismo parser que el backend)
-                if p["paste_mode"] == MODES[2]:  # Lista
-                    try:
-                        from src.core.range_migrator import _expand_cell_tokens
-                        cells_preview = _expand_cell_tokens(p["cell_list"])
-                        preview_str = ", ".join(cells_preview[:12])
-                        if len(cells_preview) > 12:
-                            preview_str += f" ... (+{len(cells_preview)-12} mas)"
-                        self._qlog("uni",
-                            f"📌 Pegando en   : {preview_str}  "
-                            f"({len(cells_preview)} celdas)")
-                    except ValueError as e:
-                        self._qlog("uni", f"⚠ Lista invalida: {e}", "warn")
-                elif p["paste_mode"] == MODES[1]:  # Stride
-                    self._qlog("uni",
-                        f"📌 Inicio={start_cell} dir={p['direction']} salto={stride}")
-                else:  # Bloque
-                    self._qlog("uni",
-                        f"📌 Bloque desde : {start_cell}")
-
-                self._q.put(("uni_progress", 0.3))
-                result = migrate_range(
-                    src_file   = p["src_file"],
-                    src_range  = p["src_range"],
-                    dest_file  = p["dest_file"],
-                    dest_sheet = dest_sheet,
-                    mode       = p["paste_mode"],
-                    src_sheet  = p["src_sheet"],
-                    start_cell = start_cell,
-                    direction  = p["direction"],
-                    stride     = stride,
-                    cell_list  = p["cell_list"],
-                    create_backup = True,
-                )
-                self._q.put(("uni_progress", 1.0))
-
-                # Log detallado: coord=valor para cada celda escrita
-                detail = result.get("detail", [])
-                dest_name = Path(p["dest_file"]).name
-                preview = ", ".join(detail[:8])
-                if len(detail) > 8:
-                    preview += f" ... (+{len(detail)-8} mas)"
-                self._qlog("uni",
-                    f"💾 Guardado en {dest_name} → '{dest_sheet}'")
-                self._qlog("uni",
-                    f"   Valores: {preview}")
-
-                self._q.put(("uni_done", result))
-
-            else:  # Google Sheets
-                self._qlog("uni", "⚠ Google Sheets: extrayendo datos...", "warn")
-                matrix = extract_range(
-                    p["src_file"], p["src_range"], p["src_sheet"])
-                flat = [v for row in matrix for v in row]
-                self._qlog("uni", f"  {len(flat)} valores extraidos.")
-                self._q.put(("uni_progress", 0.5))
+                # ── Extraer ────────────────────────────────────────────────
                 try:
-                    from src.writers.sheets_writer import (
-                        write_month_data_to_sheets)
+                    values = extract_multi_range(fp, v_rng, src_sheet)
+                    self._qlog("uni", f"    Extraidos: {len(values)} valores")
+                except Exception as exc:
+                    self._qlog("uni", f"    Extraccion fallida: {exc}", "error")
+                    failed.append(label); continue
+
+                # ── Determinar hoja destino ────────────────────────────────
+                if dest_mode == "Excel Local":
+                    if map_mode == "Consolidar":
+                        dest_sh = dest_sheet_fixed
+                    else:   # Mismo nombre -> nombre de la hoja src o nombre de archivo
+                        dest_sh = (src_sheet if src_sheet
+                                   else fp.stem)
+
+                    # Pre-visualizacion
+                    if paste_mode == MODES[2]:
+                        try:
+                            cp = _expand_cell_tokens(cell_list)
+                            ps = ", ".join(cp[:10])
+                            if len(cp) > 10:
+                                ps += f" ... (+{len(cp)-10})"
+                            self._qlog("uni", f"    Pegando en: {ps}")
+                        except ValueError as e:
+                            self._qlog("uni", f"    Lista invalida: {e}", "error")
+                            failed.append(label); continue
+                    elif paste_mode == MODES[1]:
+                        self._qlog("uni",
+                            f"    Inicio={start_cell} dir={direction} salto={stride}")
+                    else:
+                        self._qlog("uni", f"    Bloque desde: {start_cell}")
+
                     self._qlog("uni",
-                        "⚠ Google Sheets: usa write_month_data_to_sheets (modo POA).\n"
-                        "  Para rangos universales en Sheets implementa un writer dedicado.",
-                        "warn")
-                except ImportError:
+                        f"    Destino: {dest_name} -> '{dest_sh}'")
+                    self._q.put(("uni_progress", (idx + 0.5) / total))
+
+                    # Construir matriz 2D para migrate_range
+                    # (migrate_range espera list[list] — empaquetamos)
+                    matrix = [[v] for v in values]
+
+                    try:
+                        result = migrate_range(
+                            src_file   = fp,
+                            src_range  = v_rng,
+                            dest_file  = dest_file,
+                            dest_sheet = dest_sh,
+                            mode       = paste_mode,
+                            src_sheet  = src_sheet,
+                            start_cell = start_cell,
+                            direction  = direction,
+                            stride     = stride,
+                            cell_list  = cell_list,
+                            create_backup = not backup_done,
+                        )
+                        backup_done = True
+                        cells_total += result["written"]
+                        det = result.get("detail", [])
+                        preview = ", ".join(det[:6])
+                        if len(det) > 6:
+                            preview += f" ... (+{len(det)-6})"
+                        self._qlog("uni", f"    Guardado: {preview}")
+                    except PermissionError:
+                        self._qlog("uni",
+                            "    ARCHIVO ABIERTO EN EXCEL. Cierralo e intenta de nuevo.",
+                            "error")
+                        failed.append(label); break
+                    except Exception as exc:
+                        self._qlog("uni", f"    Error escritura: {exc}", "error")
+                        failed.append(label)
+
+                else:  # Google Sheets
                     self._qlog("uni",
-                        "❌ gspread no instalado. Ejecuta: pip install gspread google-auth",
-                        "error")
-                self._q.put(("uni_done", {"written": 0, "cells": [],
-                                           "backup": None, "matrix": matrix}))
+                        "Google Sheets: soporte universal en desarrollo.", "warn")
+                    failed.append(label)
+
+                self._q.put(("uni_progress", (idx + 1) / total))
+
+            self._q.put(("uni_done", {
+                "total":  total,
+                "failed": failed,
+                "cells":  cells_total,
+            }))
 
         except Exception as exc:
-            self._qlog("uni", f"❌ Error: {exc}", "error")
+            self._qlog("uni", f"Error critico: {exc}", "error")
             self._q.put(("uni_done", None))
         finally:
             self._uni_running = False
 
-    def _uni_on_done(self, result: dict | None):
+    def _uni_on_done(self, result):
         self._uni_run_btn.configure(state="normal", text="🎯  Transferir Rango")
         if result is None:
             self._uni_status.configure(
-                text="❌ Error en la transferencia.", text_color=DANGER)
+                text="Error en la transferencia.", text_color=DANGER)
             return
-        n = result.get("written", 0)
-        detail = result.get("detail", result.get("cells", []))
+        n      = result.get("cells", 0)
+        total  = result.get("total", 0)
+        failed = result.get("failed", [])
+        all_ok = not failed
         self._uni_bar.set(1.0)
         self._uni_status.configure(
-            text=f"✅ {n} celdas escritas.", text_color=SUCCESS)
-        # Mostrar pares coord=valor reales (Bug 2: confirmacion explicita)
-        if detail:
-            for chunk_start in range(0, min(len(detail), 24), 6):
-                chunk = ", ".join(detail[chunk_start:chunk_start + 6])
-                self._uni_log_msg(f"   {chunk}")
-            if len(detail) > 24:
-                self._uni_log_msg(
-                    f"   ... (+{len(detail)-24} celdas mas)")
-        messagebox.showinfo(
-            "✅ Transferencia completada",
-            f"Rango migrado correctamente.\n\n"
-            f"Celdas escritas : {n}\n"
-            f"Modalidad       : {self._uni_mode_var.get()}\n"
-            f"Backup          : {Path(result['backup']).name if result.get('backup') else 'N/A'}",
+            text=f"{'OK' if all_ok else 'Parcial'}: {total-len(failed)}/{total} origenes  |  {n} celdas",
+            text_color=SUCCESS if all_ok else WARNING)
+        self._uni_log_msg("─" * 50)
+        summary = (
+            f"Origenes OK : {total - len(failed)} / {total}\n"
+            f"Celdas      : {n}\n"
+            f"Modalidad   : {self._uni_mode_var.get()}"
         )
+        if failed:
+            summary += f"\nErrores     : {', '.join(failed)}"
+        fn = messagebox.showinfo if all_ok else messagebox.showwarning
+        fn("Transferencia completada" if all_ok else "Transferencia parcial",
+           ("Completado!\n\n" if all_ok else "Finalizado con errores.\n\n") + summary)
 
     def _uni_log_msg(self, msg: str, level: str = "info"):
         self._q.put(("uni_log", (msg, level)))
@@ -1190,6 +1448,7 @@ class DataTravelApp(ctk.CTk):
         self._uni_log.see("end")
         self._uni_log.configure(state="disabled")
 
+    
     # ══════════════════════════════════════════════════════════════════════════
     #  COLA DE MENSAJES COMPARTIDA
     # ══════════════════════════════════════════════════════════════════════════
