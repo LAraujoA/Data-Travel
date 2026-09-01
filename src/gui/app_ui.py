@@ -104,6 +104,190 @@ def _btn(parent, text: str, command=None, color=ACCENT_DIM,
     return ctk.CTkButton(parent, **kw)
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DIALOGO DE CONFIRMACION DE MAPEO
+# ══════════════════════════════════════════════════════════════════════════════
+
+OMIT_LABEL = "-- Omitir --"
+
+
+class MappingDialog(ctk.CTkToplevel):
+    """
+    Modal de confirmacion de mapeo origen -> hoja destino.
+
+    Muestra una fila por cada origen con:
+      - Checkbox (habilitado por defecto si score >= 85, deshabilitado si sin match)
+      - Nombre del origen
+      - CTkOptionMenu con todas las hojas + OMIT_LABEL, preseleccionando el match
+      - Etiqueta de confianza coloreada
+    Retorna self.result: list[dict] | None
+    """
+
+    def __init__(self, master, rows: list[dict], dest_sheets: list[str]):
+        """
+        Parameters
+        ----------
+        rows : list[dict]
+            Cada dict: {"label": str, "fp": Path, "src_sheet": str|None,
+                        "dest_sh": str|None, "score": float}
+        dest_sheets : list[str]
+            Hojas del libro destino.
+        """
+        super().__init__(master)
+        self.result: list[dict] | None = None
+        self._rows      = rows
+        self._dest_opts = [OMIT_LABEL] + list(dest_sheets)
+
+        self.title("Confirmar Mapeo  —  Data-Travel")
+        self.geometry("860x520")
+        self.minsize(700, 380)
+        self.configure(fg_color=BG_DARK)
+        self.resizable(True, True)
+
+        # Modal: captura el foco
+        self.transient(master)
+        self.grab_set()
+
+        self._check_vars: list[ctk.BooleanVar]  = []
+        self._dest_vars:  list[ctk.StringVar]   = []
+
+        self._build()
+
+    # ── Construccion ──────────────────────────────────────────────────────────
+    def _build(self):
+        # Titulo
+        hdr = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0, height=54)
+        hdr.pack(fill="x", side="top")
+        hdr.pack_propagate(False)
+        ctk.CTkLabel(
+            hdr, text="Revision y Confirmacion de Mapeo",
+            font=ctk.CTkFont(size=16, weight="bold"), text_color="white",
+        ).pack(side="left", padx=18, pady=12)
+        ctk.CTkLabel(
+            hdr,
+            text="Ajusta la hoja destino de cada origen antes de transferir.",
+            font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+        ).pack(side="left", padx=(0, 16))
+
+        # Cabecera de columnas
+        col_hdr = ctk.CTkFrame(self, fg_color="#1A2035", corner_radius=0, height=30)
+        col_hdr.pack(fill="x", padx=0)
+        col_hdr.pack_propagate(False)
+        for txt, w in [("", 40), ("Origen", 260), ("Hoja destino", 230), ("Confianza", 120)]:
+            ctk.CTkLabel(
+                col_hdr, text=txt.upper(),
+                font=ctk.CTkFont(size=9, weight="bold"),
+                text_color=ACCENT, width=w, anchor="w",
+            ).pack(side="left", padx=(8, 0))
+
+        # Filas desplazables
+        scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=0, pady=0)
+
+        for i, row in enumerate(self._rows):
+            self._add_row(scroll, i, row)
+
+        # Pie con botones
+        foot = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0, height=54)
+        foot.pack(fill="x", side="bottom")
+        foot.pack_propagate(False)
+        info_lbl = ctk.CTkLabel(
+            foot,
+            text=f"{len(self._rows)} origen(s)  |  Solo se transfieren las filas activadas.",
+            font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+        )
+        info_lbl.pack(side="left", padx=16)
+        _btn(foot, "Cancelar", self._cancel,
+             color="#374151", hover="#4B5563", width=110, height=36).pack(
+             side="right", padx=(8, 16), pady=9)
+        _btn(foot, "Confirmar y Transferir", self._confirm,
+             color=PURPLE, hover=PURPLE_DIM, width=190, height=36).pack(
+             side="right", padx=(0, 4), pady=9)
+
+    def _add_row(self, parent, i: int, row: dict):
+        score     = row["score"]
+        matched   = row["dest_sh"] is not None
+        bg_color  = "#161C2E" if i % 2 == 0 else "#1A2238"
+
+        f = ctk.CTkFrame(parent, fg_color=bg_color, corner_radius=6, height=42)
+        f.pack(fill="x", padx=6, pady=2)
+        f.pack_propagate(False)
+
+        # Checkbox
+        chk_var = ctk.BooleanVar(value=matched)
+        self._check_vars.append(chk_var)
+        ctk.CTkCheckBox(
+            f, text="", variable=chk_var, width=28,
+            fg_color=PURPLE, hover_color=PURPLE_DIM, checkmark_color="white",
+        ).pack(side="left", padx=(8, 0))
+
+        # Nombre de origen
+        ctk.CTkLabel(
+            f, text=row["label"],
+            font=ctk.CTkFont(size=12), text_color="white",
+            width=255, anchor="w",
+        ).pack(side="left", padx=(8, 0))
+
+        # Dropdown de hoja destino
+        dest_var = ctk.StringVar(value=row["dest_sh"] if matched else OMIT_LABEL)
+        self._dest_vars.append(dest_var)
+        ctk.CTkOptionMenu(
+            f,
+            variable=dest_var,
+            values=self._dest_opts,
+            width=220, height=30,
+            fg_color=ACCENT_DIM if matched else "#374151",
+            button_color=ACCENT if matched else "#4B5563",
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left", padx=(8, 0))
+
+        # Etiqueta de confianza
+        if matched:
+            if score >= 90:
+                conf_txt   = f"Score {score:.0f}%"
+                conf_color = "#27AE60"
+            elif score >= 75:
+                conf_txt   = f"Score {score:.0f}% (revisar)"
+                conf_color = "#F39C12"
+            else:
+                conf_txt   = f"Score {score:.0f}% (bajo)"
+                conf_color = "#E74C3C"
+        else:
+            conf_txt   = "Sin match"
+            conf_color = "#5A6480"
+
+        ctk.CTkLabel(
+            f, text=conf_txt,
+            font=ctk.CTkFont(size=10), text_color=conf_color,
+            width=115, anchor="w",
+        ).pack(side="left", padx=(10, 0))
+
+    # ── Acciones ──────────────────────────────────────────────────────────────
+    def _confirm(self):
+        confirmed = []
+        for i, row in enumerate(self._rows):
+            if not self._check_vars[i].get():
+                continue
+            dest_sel = self._dest_vars[i].get()
+            if dest_sel == OMIT_LABEL:
+                continue
+            confirmed.append({
+                "fp":        row["fp"],
+                "src_sheet": row["src_sheet"],
+                "dest_sh":   dest_sel,
+                "label":     row["label"],
+            })
+        self.result = confirmed
+        self.grab_release()
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.grab_release()
+        self.destroy()
+
+
 # ── CLASE PRINCIPAL ───────────────────────────────────────────────────────────
 class DataTravelApp(ctk.CTk):
     """Ventana principal de Data-Travel."""
@@ -1204,7 +1388,7 @@ class DataTravelApp(ctk.CTk):
         if self._uni_running:
             return
 
-        # Recoger y validar archivos origen
+        # ── Validaciones ──────────────────────────────────────────────────────
         src_files = self._get_uni_src_files()
         if not src_files:
             messagebox.showwarning("Origen requerido",
@@ -1217,14 +1401,11 @@ class DataTravelApp(ctk.CTk):
                 "Escribe el rango de origen (ej: D6:D15).")
             return
 
-        # Validar campos de modalidad (Bug 4 — seguridad)
         ok, msg = self._uni_validate()
         if not ok:
-            messagebox.showwarning(
-                "Configuracion incompleta", msg)
+            messagebox.showwarning("Configuracion incompleta", msg)
             return
 
-        # Validar destino
         dest_mode = self._uni_dest_mode.get()
         if dest_mode == "Excel Local":
             v_dest = self._uni_dest_entry.get().strip()
@@ -1235,7 +1416,7 @@ class DataTravelApp(ctk.CTk):
                     "Selecciona un archivo Excel destino valido.")
                 return
 
-        # Construir parametros
+        # ── Parametros de escritura ───────────────────────────────────────────
         mode_paste = self._uni_mode_var.get()
         start_cell = (self._uni_stride_start.get().strip()
                       if mode_paste == MODES[1]
@@ -1245,30 +1426,83 @@ class DataTravelApp(ctk.CTk):
         except ValueError:
             stride = 1
 
-        # Hojas seleccionadas (modo unico) o None para multi-archivo
         if self._uni_src_mode.get() == "Archivo Unico":
             selected_sheets = self._uni_get_selected_sheets() or [None]
         else:
-            selected_sheets = [None]  # usa hoja activa de cada archivo
+            selected_sheets = [None]
 
+        map_mode = self._uni_dest_map_mode.get()
+
+        # ── Calcular jobs ─────────────────────────────────────────────────────
+        jobs_raw: list[tuple[Path, str | None]] = []
+        if len(src_files) == 1:
+            for sh in selected_sheets:
+                jobs_raw.append((src_files[0], sh if sh else None))
+        else:
+            for fp in src_files:
+                jobs_raw.append((fp, None))
+
+        # ── Si modo "Mismo nombre" en Excel: mostrar dialogo de confirmacion ──
+        confirmed_jobs: list[dict] | None = None
+
+        if dest_mode == "Excel Local" and map_mode == "Mismo nombre":
+            dest_sheets_avail = []
+            if self._uni_dest_file and self._uni_dest_file.exists():
+                try:
+                    dest_sheets_avail = get_sheet_names(self._uni_dest_file)
+                except Exception:
+                    pass
+
+            # Calcular matches previos (sin escribir)
+            dialog_rows: list[dict] = []
+            for fp, src_sheet in jobs_raw:
+                origin_label = src_sheet if src_sheet else fp.name
+                lbl          = fp.name + (f"/{src_sheet}" if src_sheet else "")
+                if dest_sheets_avail:
+                    dest_sh, score = match_dest_sheet(origin_label, dest_sheets_avail)
+                else:
+                    dest_sh, score = None, 0.0
+                dialog_rows.append({
+                    "label":      lbl,
+                    "fp":         fp,
+                    "src_sheet":  src_sheet,
+                    "dest_sh":    dest_sh,
+                    "score":      score,
+                })
+
+            # Abrir dialogo modal
+            dlg = MappingDialog(self, dialog_rows, dest_sheets_avail)
+            self.wait_window(dlg)       # bloquea hasta que el usuario confirme/cancele
+
+            if dlg.result is None:      # cancelado
+                return
+            if not dlg.result:
+                messagebox.showinfo("Sin filas activas",
+                    "No hay filas activadas para transferir.")
+                return
+            confirmed_jobs = dlg.result
+
+        # ── Construir params y lanzar worker ──────────────────────────────────
         params = {
-            "src_files":    src_files,
+            "src_files":       src_files,
             "selected_sheets": selected_sheets,
-            "src_range":    v_rng,
-            "dest_mode":    dest_mode,
-            "paste_mode":   mode_paste,
-            "start_cell":   start_cell or "A1",
-            "direction":    self._uni_dir_var.get(),
-            "stride":       stride,
-            "cell_list":    self._uni_cell_list.get().strip(),
-            "dest_file":    self._uni_dest_file,
-            "dest_sheet":   self._uni_dest_sheet_var.get(),
-            "map_mode":     self._uni_dest_map_mode.get(),
-            "dest_file_name": (self._uni_dest_file.name
-                               if self._uni_dest_file else ""),
-            "sheets_url":   self._uni_sheets_url.get().strip(),
-            "sheets_tab":   (self._uni_sheets_tab.get().strip()
-                             if hasattr(self, "_uni_sheets_tab") else ""),
+            "src_range":       v_rng,
+            "dest_mode":       dest_mode,
+            "paste_mode":      mode_paste,
+            "start_cell":      start_cell or "A1",
+            "direction":       self._uni_dir_var.get(),
+            "stride":          stride,
+            "cell_list":       self._uni_cell_list.get().strip(),
+            "dest_file":       self._uni_dest_file,
+            "dest_sheet":      self._uni_dest_sheet_var.get(),
+            "map_mode":        map_mode,
+            "dest_file_name":  (self._uni_dest_file.name
+                                if self._uni_dest_file else ""),
+            "sheets_url":      self._uni_sheets_url.get().strip(),
+            "sheets_tab":      (self._uni_sheets_tab.get().strip()
+                                if hasattr(self, "_uni_sheets_tab") else ""),
+            # Jobs pre-confirmados (None = el worker calcula su propio mapeo)
+            "confirmed_jobs":  confirmed_jobs,
         }
 
         self._uni_running = True
@@ -1282,21 +1516,93 @@ class DataTravelApp(ctk.CTk):
 
     def _uni_worker(self, p: dict):
         try:
-            src_files:   list[Path] = p["src_files"]
-            sel_sheets:  list       = p["selected_sheets"]
-            v_rng:       str        = p["src_range"]
-            paste_mode:  str        = p["paste_mode"]
-            start_cell:  str        = p["start_cell"]
-            direction:   str        = p["direction"]
-            stride:      int        = p["stride"]
-            cell_list:   str        = p["cell_list"]
-            dest_mode:   str        = p["dest_mode"]
-            map_mode:    str        = p["map_mode"]
-            dest_file:   Path       = p["dest_file"]
-            dest_sheet_fixed: str   = p["dest_sheet"]
-            dest_name:   str        = p["dest_file_name"]
+            src_files:      list[Path]       = p["src_files"]
+            sel_sheets:     list             = p["selected_sheets"]
+            v_rng:          str              = p["src_range"]
+            paste_mode:     str              = p["paste_mode"]
+            start_cell:     str              = p["start_cell"]
+            direction:      str              = p["direction"]
+            stride:         int              = p["stride"]
+            cell_list:      str              = p["cell_list"]
+            dest_mode:      str              = p["dest_mode"]
+            map_mode:       str              = p["map_mode"]
+            dest_file:      Path             = p["dest_file"]
+            dest_sheet_fixed: str            = p["dest_sheet"]
+            dest_name:      str              = p["dest_file_name"]
+            confirmed_jobs: list[dict] | None = p.get("confirmed_jobs")
 
-            # Calcular pares (archivo, hoja)
+            # ── Construir lista de trabajos ───────────────────────────────────
+            # Si hay jobs pre-confirmados (via MappingDialog), usarlos directo.
+            # De lo contrario, calcular desde src_files + sel_sheets.
+            cells_total = 0
+            failed:    list[str] = []
+            unmatched: list[str] = []
+            backup_done = False
+
+            if confirmed_jobs is not None:
+                # Modo con dialogo: jobs ya tienen (fp, src_sheet, dest_sh, label)
+                total = len(confirmed_jobs)
+                self._qlog("uni", f"Iniciando transferencia de {total} origen(s) confirmado(s).")
+
+                for idx, job in enumerate(confirmed_jobs):
+                    fp:       Path      = job["fp"]
+                    src_sheet: str|None = job["src_sheet"]
+                    dest_sh:  str       = job["dest_sh"]
+                    label:    str       = job["label"]
+
+                    self._qlog("uni", f"  [{idx+1}/{total}]  {label}  | rango: {v_rng}")
+                    self._qlog("uni", f"    Destino: {dest_name} -> '{dest_sh}'")
+                    self._q.put(("uni_progress", idx / total))
+
+                    try:
+                        values = extract_multi_range(fp, v_rng, src_sheet)
+                        self._qlog("uni", f"    Extraidos: {len(values)} valores")
+                    except Exception as exc:
+                        self._qlog("uni", f"    Extraccion fallida: {exc}", "error")
+                        failed.append(label); continue
+
+                    self._q.put(("uni_progress", (idx + 0.5) / total))
+
+                    try:
+                        if paste_mode == MODES[0]:
+                            result = write_block(
+                                dest_file, dest_sh, [[v] for v in values],
+                                start_cell=start_cell, create_backup=not backup_done)
+                        elif paste_mode == MODES[1]:
+                            result = write_stride(
+                                dest_file, dest_sh, values,
+                                start_cell=start_cell, direction=direction,
+                                stride=stride, create_backup=not backup_done)
+                        else:
+                            result = write_cell_list(
+                                dest_file, dest_sh, values,
+                                cell_list_str=cell_list,
+                                create_backup=not backup_done)
+                        backup_done = True
+                        cells_total += result["written"]
+                        det = result.get("detail", [])
+                        prev = ", ".join(det[:6])
+                        if len(det) > 6:
+                            prev += f" ... (+{len(det)-6})"
+                        self._qlog("uni", f"    Guardado: {prev}")
+                    except PermissionError:
+                        self._qlog("uni",
+                            "    ARCHIVO ABIERTO EN EXCEL. Cierralo e intenta de nuevo.",
+                            "error")
+                        failed.append(label); break
+                    except Exception as exc:
+                        self._qlog("uni", f"    Error escritura: {exc}", "error")
+                        failed.append(label)
+
+                    self._q.put(("uni_progress", (idx + 1) / total))
+
+                self._q.put(("uni_done", {
+                    "total": total, "failed": failed,
+                    "unmatched": unmatched, "cells": cells_total,
+                }))
+                return
+
+            # ── Modo sin dialogo (Consolidar / Google Sheets) ─────────────────
             jobs: list[tuple[Path, str | None]] = []
             if len(src_files) == 1:
                 for sh in sel_sheets:
@@ -1305,13 +1611,7 @@ class DataTravelApp(ctk.CTk):
                 for fp in src_files:
                     jobs.append((fp, None))
 
-            total       = len(jobs)
-            cells_total = 0
-            failed:    list[str] = []
-            unmatched: list[str] = []   # origenes sin hoja destino encontrada
-            backup_done = False
-
-            # Lista de hojas del destino (para el matcher)
+            total = len(jobs)
             dest_sheets_available: list[str] = []
             if dest_mode == "Excel Local" and dest_file and dest_file.exists():
                 try:
@@ -1324,7 +1624,6 @@ class DataTravelApp(ctk.CTk):
                 self._qlog("uni", f"  [{idx+1}/{total}]  {label}  | rango: {v_rng}")
                 self._q.put(("uni_progress", (idx) / total))
 
-                # ── Extraer ────────────────────────────────────────────────
                 try:
                     values = extract_multi_range(fp, v_rng, src_sheet)
                     self._qlog("uni", f"    Extraidos: {len(values)} valores")
@@ -1332,12 +1631,10 @@ class DataTravelApp(ctk.CTk):
                     self._qlog("uni", f"    Extraccion fallida: {exc}", "error")
                     failed.append(label); continue
 
-                # ── Determinar hoja destino ────────────────────────────────
                 if dest_mode == "Excel Local":
                     if map_mode == "Consolidar":
                         dest_sh = dest_sheet_fixed
                     else:
-                        # Modo "Mismo nombre": usar el matcher con fuzzy matching
                         origin_label = src_sheet if src_sheet else fp.name
                         if dest_sheets_available:
                             dest_sh, score = match_dest_sheet(
@@ -1359,7 +1656,6 @@ class DataTravelApp(ctk.CTk):
                                 f"(score={score:.0f})",
                             )
                         else:
-                            # Sin hojas disponibles: usar nombre directo
                             dest_sh = src_sheet if src_sheet else fp.stem
 
                     # Pre-visualizacion

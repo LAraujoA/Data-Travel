@@ -230,55 +230,117 @@ def get_sheet_names(filepath: Union[str, Path]) -> list[str]:
 #  Matching de hoja destino (reutiliza matcher.py)
 # ─────────────────────────────────────────────────────────────
 
+def _normalize_light(s: str) -> str:
+    """
+    Normalizacion ligera para matching de hojas en el Migrador Universal.
+    Solo elimina: extension de archivo, acentos, espacios y guiones.
+    NO elimina tokens institucionales (eso causaria falsos positivos al
+    comparar nombres de hojas del destino como 'Chirilagua' entre si).
+    """
+    # 1. Quitar extension de archivo si la tiene (.xlsx, .xls, etc.)
+    s = re.sub(r"\.xlsx?$", "", s, flags=re.IGNORECASE)
+    # 2. Quitar acentos: NFD -> filtrar combining marks
+    nfd = unicodedata.normalize("NFD", s)
+    s   = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
+    # 3. Quitar solo espacios y guiones (NO alfanumericos arbitrarios)
+    s = re.sub(r"[\s\-_]+", "", s)
+    return s.lower()
+
+
 def match_dest_sheet(
     origin_label: str,
     dest_sheet_names: list[str],
-    score_cutoff: float = 60.0,
+    score_cutoff: float = 85.0,
 ) -> tuple[str | None, float]:
     """
-    Encuentra la hoja destino cuyo nombre normalizado mejor coincide con el
-    origen, usando la logica existente de matcher.py (rapidfuzz).
+    Encuentra la hoja destino que mejor coincide con el origen.
+
+    Estrategia de tres niveles (sin falsos positivos entre hojas):
+
+      Nivel 1 — Exacto ligero:
+          Normalizar solo acentos/espacios/extension y comparar.
+          Ej: "ElCuco" == "EL CUCO.xlsx"  -> match inmediato, score 100.
+
+      Nivel 2 — Fuzzy ligero:
+          rapidfuzz token_sort_ratio sobre formas light-normalizadas.
+          Requiere score >= score_cutoff (85).
+          Ej: "SanMiguel" ~ "san miguel.xlsx"  -> match.
+
+      Nivel 3 — Normalizacion completa (matcher.py):
+          Aplica quitar prefijos institucionales (US-B, SM, Carolina, etc.)
+          Solo se ejecuta si los niveles 1 y 2 fallan.
+          Ej: "US-B Carolina SM La Ceibita.xlsx" -> "LaCeibita".
+
+    La normalizacion ligera de los niveles 1-2 evita que 'Chirilagua' y
+    'Carolina' (hojas del destino) colapsen al mismo token; el nivel 3
+    solo actua sobre el origen, no sobre los nombres de hojas destino.
 
     Parameters
     ----------
     origin_label : str
-        Nombre del archivo origen (ej: 'EL CUCO.xlsx') o nombre de hoja
-        (ej: 'US-B Carolina SM La Ceibita').
+        Nombre del archivo (.xlsx) o hoja origen.
     dest_sheet_names : list[str]
         Hojas disponibles en el libro destino.
     score_cutoff : float
-        Umbral minimo de similitud (0-100). Default 60.
+        Umbral minimo de similitud para niveles fuzzy. Default 85.
 
     Returns
     -------
     tuple[str | None, float]
         (nombre_hoja_ganadora, puntuacion) o (None, 0.0) si no hay match.
-
-    Examples
-    --------
-    >>> match_dest_sheet("EL CUCO.xlsx", ["ElCuco", "SanPedro", "LaCeibita"])
-    ('ElCuco', 100.0)
-    >>> match_dest_sheet("US-B Carolina SM La Ceibita.xlsx", ["LaCeibita", ...])
-    ('LaCeibita', 100.0)
     """
-    try:
-        from src.core.matcher import match_file_to_sheet
-        return match_file_to_sheet(origin_label, dest_sheet_names, score_cutoff)
-    except ImportError:
-        log.warning(
-            "matcher.py no disponible; usando comparacion exacta normalizada.")
-        # Fallback: normalizacion basica sin rapidfuzz
-        def _norm(s: str) -> str:
-            import unicodedata, re
-            nfd = unicodedata.normalize("NFD", s)
-            s = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
-            s = re.sub(r"[^a-z0-9]", "", s.lower())
-            return s
-        q = _norm(origin_label)
-        for name in dest_sheet_names:
-            if _norm(name) == q:
-                return name, 100.0
+    if not dest_sheet_names:
         return None, 0.0
+
+    # Nivel 1: Coincidencia exacta con normalizacion ligera
+    o_clean = _normalize_light(origin_label)
+    for name in dest_sheet_names:
+        if _normalize_light(name) == o_clean:
+            return name, 100.0
+
+    # Nivel 2: Fuzzy sobre formas light-normalizadas
+    try:
+        from rapidfuzz import process, fuzz
+        norm_to_orig = {_normalize_light(n): n for n in dest_sheet_names}
+        result = process.extractOne(
+            query        = o_clean,
+            choices      = list(norm_to_orig.keys()),
+            scorer       = fuzz.token_sort_ratio,
+            score_cutoff = score_cutoff,
+        )
+        if result is not None:
+            matched_norm, score, _ = result
+            return norm_to_orig[matched_norm], float(score)
+    except ImportError:
+        pass  # sin rapidfuzz, pasamos al nivel 3
+
+    # Nivel 3: Normalizacion completa (quita prefijos institucionales)
+    # Solo sobre el origen — las hojas destino se normalizan de forma ligera
+    # para no colapsar nombres validos como 'Chirilagua' y 'Carolina'.
+    try:
+        from src.core.matcher import normalize_name
+        o_full = normalize_name(origin_label)
+        # Match exacto con full-normalization del origen
+        for name in dest_sheet_names:
+            if _normalize_light(name) == o_full:
+                return name, 95.0
+        # Fuzzy con full-normalized origen vs light-normalized destinos
+        from rapidfuzz import process, fuzz
+        norm_to_orig = {_normalize_light(n): n for n in dest_sheet_names}
+        result = process.extractOne(
+            query        = o_full,
+            choices      = list(norm_to_orig.keys()),
+            scorer       = fuzz.token_sort_ratio,
+            score_cutoff = score_cutoff,
+        )
+        if result is not None:
+            matched_norm, score, _ = result
+            return norm_to_orig[matched_norm], float(score)
+    except ImportError:
+        log.warning("matcher.py no disponible para nivel 3.")
+
+    return None, 0.0
+
 
 
 # ─────────────────────────────────────────────────────────────
