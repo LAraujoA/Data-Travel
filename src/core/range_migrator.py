@@ -92,6 +92,57 @@ def _cell_a1(row: int, col: int) -> str:
     return f"{get_column_letter(col)}{row}"
 
 
+def _expand_cell_tokens(cell_list_str: str) -> list[str]:
+    """
+    Parsea un string de destinos separados por coma y devuelve
+    una lista plana de referencias de celda A1.
+
+    Acepta cualquier combinacion de:
+      - Celdas simples : "C20, G20"
+      - Rangos         : "C20:C22, G20:G22"
+      - Mixta          : "C20, D20:D22, H5"
+
+    Parameters
+    ----------
+    cell_list_str : str
+        String con celdas/rangos separados por coma.
+
+    Returns
+    -------
+    list[str]
+        Lista plana de celdas A1 en mayusculas, ej: ['C20','C21','C22','G20'].
+
+    Raises
+    ------
+    ValueError
+        Si algun token no es celda ni rango A1 valido.
+
+    Examples
+    --------
+    >>> _expand_cell_tokens("C20, C21, C22")
+    ['C20', 'C21', 'C22']
+    >>> _expand_cell_tokens("C20:C22, G20:G22")
+    ['C20', 'C21', 'C22', 'G20', 'G21', 'G22']
+    """
+    tokens = [t.strip().upper() for t in cell_list_str.split(",") if t.strip()]
+    if not tokens:
+        raise ValueError("cell_list_str esta vacia o no contiene celdas validas.")
+
+    result: list[str] = []
+    for tok in tokens:
+        if ":" in tok:
+            # Es un rango — expandir a todas las celdas que lo componen
+            r1, c1, r2, c2 = _parse_range(tok)
+            for r in range(r1, r2 + 1):
+                for c in range(c1, c2 + 1):
+                    result.append(_cell_a1(r, c))
+        else:
+            # Es una celda simple — validar y agregar
+            _parse_cell(tok)   # lanza ValueError si es invalida
+            result.append(tok)
+    return result
+
+
 # ─────────────────────────────────────────────────────────────
 #  Extraccion
 # ─────────────────────────────────────────────────────────────
@@ -233,19 +284,32 @@ def write_block(
 
     written = 0
     cells_written: list[str] = []
+    detail_pairs: list[str] = []
     for r_off, row in enumerate(matrix):
         for c_off, val in enumerate(row):
             tgt_row = start_row + r_off
             tgt_col = start_col + c_off
+            coord = _cell_a1(tgt_row, tgt_col)
             ws.cell(row=tgt_row, column=tgt_col).value = val
-            cells_written.append(_cell_a1(tgt_row, tgt_col))
+            cells_written.append(coord)
+            detail_pairs.append(f"{coord}={val}")
             written += 1
 
     wb.save(dest_path)
     wb.close()
-    log.info("Bloque continuo: %d celdas escritas desde %s", written, start_cell)
-    return {"written": written, "cells": cells_written,
-            "backup": str(backup) if backup else None}
+    detail_str = ", ".join(detail_pairs[:10])
+    if written > 10:
+        detail_str += f" ... (+{written - 10} mas)"
+    log.info(
+        "[Bloque] '%s' -> %d celdas desde %s: %s",
+        sheet_name, written, start_cell, detail_str,
+    )
+    return {
+        "written": written,
+        "cells": cells_written,
+        "detail": detail_pairs,
+        "backup": str(backup) if backup else None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -328,6 +392,7 @@ def write_stride(
 
     written = 0
     cells_written: list[str] = []
+    detail_pairs: list[str] = []
     for i, val in enumerate(flat):
         if direction == "Horizontal":
             tgt_row = start_row
@@ -335,17 +400,27 @@ def write_stride(
         else:  # Vertical
             tgt_row = start_row + i * stride
             tgt_col = start_col
+        coord = _cell_a1(tgt_row, tgt_col)
         ws.cell(row=tgt_row, column=tgt_col).value = val
-        cells_written.append(_cell_a1(tgt_row, tgt_col))
+        cells_written.append(coord)
+        detail_pairs.append(f"{coord}={val}")
         written += 1
 
     wb.save(dest_path)
     wb.close()
+    detail_str = ", ".join(detail_pairs[:10])
+    if written > 10:
+        detail_str += f" ... (+{written - 10} mas)"
     log.info(
-        "Stride %s paso=%d: %d celdas desde %s",
-        direction, stride, written, start_cell)
-    return {"written": written, "cells": cells_written,
-            "backup": str(backup) if backup else None}
+        "[Stride-%s paso=%d] '%s' -> %d celdas: %s",
+        direction, stride, sheet_name, written, detail_str,
+    )
+    return {
+        "written": written,
+        "cells": cells_written,
+        "detail": detail_pairs,
+        "backup": str(backup) if backup else None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -396,12 +471,11 @@ def write_cell_list(
     if not dest_path.exists():
         raise FileNotFoundError(f"Destino no encontrado: {dest_path}")
 
-    # Parsear lista de celdas
-    target_cells = [c.strip() for c in cell_list_str.split(",") if c.strip()]
-    if not target_cells:
-        raise ValueError("cell_list_str esta vacia o no contiene celdas validas.")
+    # Bug 1 fix: usar _expand_cell_tokens para soportar celdas simples
+    # Y rangos mezclados: "C20, C21" o "C20:C22, G20:G22"
+    target_cells = _expand_cell_tokens(cell_list_str)
 
-    # Aplanar valores
+    # Aplanar valores (puede venir como list[list] de extract_range)
     flat: list = []
     for item in values:
         if isinstance(item, list):
@@ -421,7 +495,9 @@ def write_cell_list(
         backup = dest_path.with_suffix(".backup.xlsx")
         shutil.copy2(dest_path, backup)
 
-    wb = openpyxl.load_workbook(dest_path)
+    # Bug 2 fix: abrir en modo r/w (sin data_only), acceder a la hoja
+    # correcta, escribir celda a celda, save() expliciton y cerrar.
+    wb = openpyxl.load_workbook(dest_path, data_only=False)
     if sheet_name not in wb.sheetnames:
         raise KeyError(
             f"Hoja '{sheet_name}' no existe. Disponibles: {wb.sheetnames}")
@@ -429,17 +505,31 @@ def write_cell_list(
 
     written = 0
     cells_written: list[str] = []
+    detail_pairs: list[str] = []
     for cell_ref, val in zip(target_cells, flat):
         r, c = _parse_cell(cell_ref)
         ws.cell(row=r, column=c).value = val
-        cells_written.append(cell_ref.upper())
+        coord = cell_ref.upper()
+        cells_written.append(coord)
+        detail_pairs.append(f"{coord}={val}")
         written += 1
 
     wb.save(dest_path)
     wb.close()
-    log.info("Lista explicita: %d celdas escritas", written)
-    return {"written": written, "cells": cells_written,
-            "backup": str(backup) if backup else None}
+
+    detail_str = ", ".join(detail_pairs[:10])
+    if written > 10:
+        detail_str += f" ... (+{written - 10} mas)"
+    log.info(
+        "[Lista] '%s' -> %d celdas: %s",
+        sheet_name, written, detail_str,
+    )
+    return {
+        "written": written,
+        "cells": cells_written,
+        "detail": detail_pairs,
+        "backup": str(backup) if backup else None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────

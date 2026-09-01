@@ -1069,12 +1069,19 @@ class DataTravelApp(ctk.CTk):
                 self._qlog("uni",
                     f"📄 Destino      : {Path(p['dest_file']).name} → '{dest_sheet}'")
 
-                # Preview de celdas destino
+                # Pre-visualizacion de celdas destino (usa el mismo parser que el backend)
                 if p["paste_mode"] == MODES[2]:  # Lista
-                    cells_preview = [c.strip()
-                                     for c in p["cell_list"].split(",") if c.strip()]
-                    self._qlog("uni",
-                        f"📌 Pegando en   : {', '.join(cells_preview)}")
+                    try:
+                        from src.core.range_migrator import _expand_cell_tokens
+                        cells_preview = _expand_cell_tokens(p["cell_list"])
+                        preview_str = ", ".join(cells_preview[:12])
+                        if len(cells_preview) > 12:
+                            preview_str += f" ... (+{len(cells_preview)-12} mas)"
+                        self._qlog("uni",
+                            f"📌 Pegando en   : {preview_str}  "
+                            f"({len(cells_preview)} celdas)")
+                    except ValueError as e:
+                        self._qlog("uni", f"⚠ Lista invalida: {e}", "warn")
                 elif p["paste_mode"] == MODES[1]:  # Stride
                     self._qlog("uni",
                         f"📌 Inicio={start_cell} dir={p['direction']} salto={stride}")
@@ -1097,6 +1104,18 @@ class DataTravelApp(ctk.CTk):
                     create_backup = True,
                 )
                 self._q.put(("uni_progress", 1.0))
+
+                # Log detallado: coord=valor para cada celda escrita
+                detail = result.get("detail", [])
+                dest_name = Path(p["dest_file"]).name
+                preview = ", ".join(detail[:8])
+                if len(detail) > 8:
+                    preview += f" ... (+{len(detail)-8} mas)"
+                self._qlog("uni",
+                    f"💾 Guardado en {dest_name} → '{dest_sheet}'")
+                self._qlog("uni",
+                    f"   Valores: {preview}")
+
                 self._q.put(("uni_done", result))
 
             else:  # Google Sheets
@@ -1133,12 +1152,18 @@ class DataTravelApp(ctk.CTk):
                 text="❌ Error en la transferencia.", text_color=DANGER)
             return
         n = result.get("written", 0)
-        cells = result.get("cells", [])
+        detail = result.get("detail", result.get("cells", []))
         self._uni_bar.set(1.0)
         self._uni_status.configure(
             text=f"✅ {n} celdas escritas.", text_color=SUCCESS)
-        self._uni_log_msg(f"✅ Escritas: {cells[:6]}"
-                          + (" ..." if len(cells) > 6 else ""))
+        # Mostrar pares coord=valor reales (Bug 2: confirmacion explicita)
+        if detail:
+            for chunk_start in range(0, min(len(detail), 24), 6):
+                chunk = ", ".join(detail[chunk_start:chunk_start + 6])
+                self._uni_log_msg(f"   {chunk}")
+            if len(detail) > 24:
+                self._uni_log_msg(
+                    f"   ... (+{len(detail)-24} celdas mas)")
         messagebox.showinfo(
             "✅ Transferencia completada",
             f"Rango migrado correctamente.\n\n"
