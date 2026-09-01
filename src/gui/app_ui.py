@@ -1150,7 +1150,7 @@ class DataTravelApp(ctk.CTk):
     def _get_uni_src_sheet_for_preview(self, fp: Path):
         """Retorna la primera hoja seleccionada (o None)."""
         if self._uni_sheet_vars:
-            sel = self._get_selected_sheets()
+            sel = self._uni_get_selected_sheets()
             return sel[0] if sel else None
         return None
 
@@ -1246,7 +1246,7 @@ class DataTravelApp(ctk.CTk):
 
         # Hojas seleccionadas (modo unico) o None para multi-archivo
         if self._uni_src_mode.get() == "Archivo Unico":
-            selected_sheets = self._get_selected_sheets() or [None]
+            selected_sheets = self._uni_get_selected_sheets() or [None]
         else:
             selected_sheets = [None]  # usa hoja activa de cada archivo
 
