@@ -32,6 +32,7 @@ from src.writers.excel_writer import write_month_data_to_excel
 from src.core.range_migrator import (
     extract_range, extract_multi_range, get_sheet_names,
     migrate_range, _expand_cell_tokens, MODES,
+    write_block, write_stride, write_cell_list,
 )
 
 # ── TEMA ──────────────────────────────────────────────────────────────────────
@@ -1351,24 +1352,32 @@ class DataTravelApp(ctk.CTk):
                         f"    Destino: {dest_name} -> '{dest_sh}'")
                     self._q.put(("uni_progress", (idx + 0.5) / total))
 
-                    # Construir matriz 2D para migrate_range
-                    # (migrate_range espera list[list] — empaquetamos)
-                    matrix = [[v] for v in values]
-
+                    # ── Escritura directa con valores ya extraidos ──────────
+                    # No volver a parsear v_rng; usar 'values' directamente.
                     try:
-                        result = migrate_range(
-                            src_file   = fp,
-                            src_range  = v_rng,
-                            dest_file  = dest_file,
-                            dest_sheet = dest_sh,
-                            mode       = paste_mode,
-                            src_sheet  = src_sheet,
-                            start_cell = start_cell,
-                            direction  = direction,
-                            stride     = stride,
-                            cell_list  = cell_list,
-                            create_backup = not backup_done,
-                        )
+                        if paste_mode == MODES[0]:        # Bloque Continuo
+                            # write_block espera list[list]; envolvemos cada
+                            # valor en su propia fila [[v1],[v2],...]
+                            matrix_2d = [[v] for v in values]
+                            result = write_block(
+                                dest_file, dest_sh, matrix_2d,
+                                start_cell    = start_cell,
+                                create_backup = not backup_done,
+                            )
+                        elif paste_mode == MODES[1]:       # Salto
+                            result = write_stride(
+                                dest_file, dest_sh, values,
+                                start_cell    = start_cell,
+                                direction     = direction,
+                                stride        = stride,
+                                create_backup = not backup_done,
+                            )
+                        else:                              # Lista de Celdas
+                            result = write_cell_list(
+                                dest_file, dest_sh, values,
+                                cell_list_str = cell_list,
+                                create_backup = not backup_done,
+                            )
                         backup_done = True
                         cells_total += result["written"]
                         det = result.get("detail", [])
