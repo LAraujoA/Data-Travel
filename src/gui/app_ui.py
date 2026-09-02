@@ -1681,36 +1681,64 @@ class DataTravelApp(ctk.CTk):
 
                     self._q.put(("uni_progress", (idx + 0.5) / total))
 
-                    try:
-                        if paste_mode == MODES[0]:
-                            result = write_block(
-                                dest_file, dest_sh, [[v] for v in values],
-                                start_cell=start_cell, create_backup=not backup_done)
-                        elif paste_mode == MODES[1]:
-                            result = write_stride(
-                                dest_file, dest_sh, values,
-                                start_cell=start_cell, direction=direction,
-                                stride=stride, create_backup=not backup_done)
-                        else:
-                            result = write_cell_list(
-                                dest_file, dest_sh, values,
-                                cell_list_str=cell_list,
-                                create_backup=not backup_done)
-                        backup_done = True
-                        cells_total += result["written"]
-                        det = result.get("detail", [])
-                        prev = ", ".join(det[:6])
-                        if len(det) > 6:
-                            prev += f" ... (+{len(det)-6})"
-                        self._qlog("uni", f"    Guardado: {prev}")
-                    except PermissionError:
-                        self._qlog("uni",
-                            "    ARCHIVO ABIERTO EN EXCEL. Cierralo e intenta de nuevo.",
-                            "error")
-                        failed.append(label); break
-                    except Exception as exc:
-                        self._qlog("uni", f"    Error escritura: {exc}", "error")
-                        failed.append(label)
+                    if dest_mode == "Excel Local":
+                        try:
+                            if paste_mode == MODES[0]:
+                                result = write_block(
+                                    dest_file, dest_sh, [[v] for v in values],
+                                    start_cell=start_cell, create_backup=not backup_done)
+                            elif paste_mode == MODES[1]:
+                                result = write_stride(
+                                    dest_file, dest_sh, values,
+                                    start_cell=start_cell, direction=direction,
+                                    stride=stride, create_backup=not backup_done)
+                            else:
+                                result = write_cell_list(
+                                    dest_file, dest_sh, values,
+                                    cell_list_str=cell_list,
+                                    create_backup=not backup_done)
+                            backup_done = True
+                            cells_total += result["written"]
+                            det = result.get("detail", [])
+                            prev = ", ".join(det[:6])
+                            if len(det) > 6:
+                                prev += f" ... (+{len(det)-6})"
+                            self._qlog("uni", f"    Guardado: {prev}")
+                        except PermissionError:
+                            self._qlog("uni",
+                                "    ARCHIVO ABIERTO EN EXCEL. Cierralo e intenta de nuevo.",
+                                "error")
+                            failed.append(label); break
+                        except Exception as exc:
+                            self._qlog("uni", f"    Error escritura: {exc}", "error")
+                            failed.append(label)
+                    else:  # Google Sheets
+                        sheets_url    = p["sheets_url"]
+                        sheets_creds  = p.get("sheets_creds", "credentials.json")
+                        try:
+                            result = write_range_to_sheets(
+                                spreadsheet_id_or_url = sheets_url,
+                                sheet_name  = dest_sh,
+                                values      = values,
+                                mode        = paste_mode,
+                                credentials_path = sheets_creds,
+                                start_cell  = start_cell,
+                                direction   = direction,
+                                stride      = stride,
+                                cell_list_str = cell_list,
+                            )
+                            cells_total += result["written"]
+                            det = result.get("detail", [])
+                            prev = ", ".join(det[:6])
+                            if len(det) > 6:
+                                prev += f" ... (+{len(det)-6})"
+                            self._qlog("uni", f"    Sheets guardado: {prev}")
+                        except RuntimeError as exc:
+                            self._qlog("uni", f"    {exc}", "warn")
+                            failed.append(label)
+                        except Exception as exc:
+                            self._qlog("uni", f"    Error Sheets: {exc}", "error")
+                            failed.append(label)
 
                     self._q.put(("uni_progress", (idx + 1) / total))
 
