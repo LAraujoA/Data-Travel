@@ -48,10 +48,20 @@ ACCENT_DIM = "#1F538A"
 SUCCESS    = "#27AE60"
 WARNING    = "#F39C12"
 DANGER     = "#E74C3C"
-BG_CARD    = "#1E2430"
-BG_DARK    = "#161B27"
-TEXT_MUTED = "#8B9DC3"
-TEXT_DIM   = "#5A6480"
+
+BG_WINDOW   = ("#F8FAFC", "#0F172A")
+BG_CARD     = ("#FFFFFF", "#1E293B")
+BG_DARK     = ("#F8FAFC", "#0F172A")  # Alias for compatibility if missed
+CARD_BORDER = ("#E2E8F0", "#334155")
+TEXT_MAIN   = ("#0F172A", "#F8FAFC")
+TEXT_MUTED  = ("#64748B", "#94A3B8")
+ENTRY_BG    = ("#F1F5F9", "#0F172A")
+ENTRY_TEXT  = ("#0F172A", "#FFFFFF")
+TEXT_DIM    = ("#94A3B8", "#5A6480")
+TAB_BG      = ("#F8FAFC", "#0F172A")
+TAB_UNSEL   = ("#FFFFFF", "#1E293B")
+TAB_HOVER   = ("#F1F5F9", "#2D3A55")
+
 PURPLE     = "#8B5CF6"
 PURPLE_DIM = "#5B21B6"
 
@@ -69,7 +79,7 @@ CORNER_R  = 10
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def _card(parent, **kw) -> ctk.CTkFrame:
-    d = dict(fg_color=BG_CARD, corner_radius=CORNER_R)
+    d = dict(fg_color=BG_CARD, border_color=CARD_BORDER, border_width=1, corner_radius=CORNER_R)
     d.update(kw)
     return ctk.CTkFrame(parent, **d)
 
@@ -93,7 +103,8 @@ def _muted(parent, text: str) -> ctk.CTkLabel:
 def _entry(parent, placeholder: str = "", width: int = 0,
            font_size: int = 12) -> ctk.CTkEntry:
     kw = dict(placeholder_text=placeholder, height=34,
-              font=ctk.CTkFont(size=font_size))
+              font=ctk.CTkFont(size=font_size),
+              fg_color=ENTRY_BG, text_color=ENTRY_TEXT)
     if width:
         kw["width"] = width
     return ctk.CTkEntry(parent, **kw)
@@ -146,7 +157,7 @@ class MappingDialog(ctk.CTkToplevel):
         self.title("Confirmar Mapeo  —  Data-Travel")
         self.geometry("860x520")
         self.minsize(700, 380)
-        self.configure(fg_color=BG_DARK)
+        self.configure(fg_color=BG_WINDOW)
         self.resizable(True, True)
 
         # Modal: captura el foco
@@ -166,7 +177,7 @@ class MappingDialog(ctk.CTkToplevel):
         hdr.pack_propagate(False)
         ctk.CTkLabel(
             hdr, text="Revision y Confirmacion de Mapeo",
-            font=ctk.CTkFont(size=16, weight="bold"), text_color="white",
+            font=ctk.CTkFont(size=16, weight="bold"), text_color=TEXT_MAIN,
         ).pack(side="left", padx=18, pady=12)
         ctk.CTkLabel(
             hdr,
@@ -229,7 +240,7 @@ class MappingDialog(ctk.CTkToplevel):
         # Nombre de origen
         ctk.CTkLabel(
             f, text=row["label"],
-            font=ctk.CTkFont(size=12), text_color="white",
+            font=ctk.CTkFont(size=12), text_color=TEXT_MAIN,
             width=255, anchor="w",
         ).pack(side="left", padx=(8, 0))
 
@@ -301,7 +312,7 @@ class DataTravelApp(ctk.CTk):
         self.title("Data-Travel  —  Migrador de Reportes POA")
         self.geometry(f"{WINDOW_W}x{WINDOW_H}")
         self.minsize(800, 720)
-        self.configure(fg_color=BG_DARK)
+        self.configure(fg_color=BG_WINDOW)
         self.resizable(True, True)
 
         # Estado POA
@@ -339,7 +350,7 @@ class DataTravelApp(ctk.CTk):
         tf.pack(side="left", pady=10)
         ctk.CTkLabel(tf, text="Data-Travel",
                      font=ctk.CTkFont(size=19, weight="bold"),
-                     text_color="white").pack(anchor="w")
+                     text_color=TEXT_MAIN).pack(anchor="w")
         ctk.CTkLabel(tf, text="Migrador de Reportes POA  •  MINSAL El Salvador",
                      font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(anchor="w")
         self._theme_btn = ctk.CTkButton(
@@ -359,13 +370,13 @@ class DataTravelApp(ctk.CTk):
     def _build_tabs(self):
         self._tabs = ctk.CTkTabview(
             self,
-            fg_color=BG_DARK,
+            fg_color=TAB_BG,
             segmented_button_fg_color=BG_CARD,
             segmented_button_selected_color=ACCENT,
             segmented_button_selected_hover_color=ACCENT_DIM,
-            segmented_button_unselected_color=BG_CARD,
-            segmented_button_unselected_hover_color="#2D3A55",
-            text_color="white",
+            segmented_button_unselected_color=TAB_UNSEL,
+            segmented_button_unselected_hover_color=TAB_HOVER,
+            text_color=TEXT_MAIN,
             text_color_disabled=TEXT_DIM,
         )
         self._tabs.pack(fill="both", expand=True, padx=0, pady=0)
