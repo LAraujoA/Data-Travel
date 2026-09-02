@@ -1,6 +1,22 @@
-/ARCHIVOSPRUEBAS
-__pycache__/
-*.pyc
+# Entorno y Dependencias
 venv/
 .env
-credentials.json
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Credenciales de Google (Cualquier JSON de credenciales)
+credentials*.json
+*.json.secret
+
+# Carpetas de Compilación (PyInstaller)
+build/
+dist/
+*.spec
+
+# Archivos de Pruebas y Temporales
+/ARCHIVOSPRUEBAS/
+*.xlsx
+*.xls
