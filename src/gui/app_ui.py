@@ -49,10 +49,10 @@ SUCCESS    = "#27AE60"
 WARNING    = "#F39C12"
 DANGER     = "#E74C3C"
 
-BG_WINDOW   = ("#F8FAFC", "#0F172A")
+BG_WINDOW   = ("#F1F5F9", "#0B1120")
 BG_CARD     = ("#FFFFFF", "#1E293B")
 BG_DARK     = ("#F8FAFC", "#0F172A")  # Alias for compatibility if missed
-CARD_BORDER = ("#E2E8F0", "#334155")
+CARD_BORDER = ("#CBD5E1", "#334155")
 TEXT_MAIN   = ("#0F172A", "#F8FAFC")
 TEXT_MUTED  = ("#64748B", "#94A3B8")
 ENTRY_BG    = ("#F1F5F9", "#0F172A")
@@ -74,12 +74,12 @@ MONTHS = [
 WINDOW_W = 880
 WINDOW_H = 820
 CARD_PAD  = 16
-CORNER_R  = 10
+CORNER_R  = 8
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def _card(parent, **kw) -> ctk.CTkFrame:
-    d = dict(fg_color=BG_CARD, border_color=CARD_BORDER, border_width=1, corner_radius=CORNER_R)
+    d = dict(bg_color="transparent", fg_color=BG_CARD, border_color=CARD_BORDER, border_width=1, corner_radius=CORNER_R)
     d.update(kw)
     return ctk.CTkFrame(parent, **d)
 
@@ -225,7 +225,7 @@ class MappingDialog(ctk.CTkToplevel):
         matched   = row["dest_sh"] is not None
         bg_color  = "#161C2E" if i % 2 == 0 else "#1A2238"
 
-        f = ctk.CTkFrame(parent, fg_color=bg_color, corner_radius=6, height=42)
+        f = ctk.CTkFrame(parent, bg_color="transparent", fg_color=bg_color, corner_radius=6, height=42)
         f.pack(fill="x", padx=6, pady=2)
         f.pack_propagate(False)
 
@@ -467,7 +467,7 @@ class DataTravelApp(ctk.CTk):
             background=[("selected", ACCENT_DIM)],
             foreground=[("selected", "white")])
 
-        tf = ctk.CTkFrame(c, fg_color="#1A2035", corner_radius=8)
+        tf = ctk.CTkFrame(c, bg_color="transparent", fg_color="#1A2035", corner_radius=8)
         tf.grid(row=1, column=0, sticky="ew", padx=CARD_PAD, pady=(0, CARD_PAD))
         cols = ("archivo", "pestana", "score", "estado")
         self._poa_tree = ttk.Treeview(tf, columns=cols, show="headings",
@@ -877,7 +877,9 @@ class DataTravelApp(ctk.CTk):
             pady=(0, 6))
         self._uni_sheets_frame_outer.grid_propagate(False)
         self._uni_sheets_scroll = ctk.CTkScrollableFrame(
-            self._uni_sheets_frame_outer, fg_color="transparent",
+            self._uni_sheets_frame_outer, bg_color="transparent",
+            fg_color=("#F8FAFC", "#0F172A"), border_width=1,
+            border_color=("#E2E8F0", "#334155"), corner_radius=6,
             orientation="horizontal", height=70)
         self._uni_sheets_scroll.pack(fill="both", expand=True, padx=6, pady=4)
 
