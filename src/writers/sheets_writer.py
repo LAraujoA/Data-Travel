@@ -256,3 +256,257 @@ def write_month_data_to_sheets(
     except Exception as exc:
         log.error("Error en batch_update: %s", exc)
         raise
+
+
+# ---------------------------------------------------------------------------
+#  get_sheet_tabs — lista de pestanas de un Spreadsheet
+# ---------------------------------------------------------------------------
+
+def get_sheet_tabs(
+    spreadsheet_id_or_url: str,
+    credentials_path: str = "credentials.json",
+) -> list[str]:
+    """
+    Retorna la lista de nombres de pestanas del Spreadsheet.
+
+    Parameters
+    ----------
+    spreadsheet_id_or_url : str
+        URL completa o ID del spreadsheet.
+    credentials_path : str
+        Ruta al JSON de service account.
+
+    Returns
+    -------
+    list[str]
+        Nombres de las hojas disponibles.
+
+    Raises
+    ------
+    ImportError   : gspread / google-auth no instalados.
+    FileNotFoundError : credentials.json no encontrado.
+    gspread.exceptions.APIError : credenciales invalidas o sin permiso.
+    """
+    if not _GSPREAD_AVAILABLE:
+        raise ImportError(
+            "gspread y google-auth son necesarios.\n"
+            "Instala con: pip install gspread google-auth"
+        )
+    from pathlib import Path as _Path
+    creds_p = _Path(credentials_path)
+    if not creds_p.exists():
+        raise FileNotFoundError(
+            f"Credenciales no encontradas: {creds_p.resolve()}\n"
+            "Descarga el JSON de service account desde Google Cloud Console."
+        )
+    try:
+        creds = SACredentials.from_service_account_file(
+            credentials_path, scopes=_SHEETS_SCOPES
+        )
+        gc = gspread.authorize(creds)
+        sid = _extract_spreadsheet_id(spreadsheet_id_or_url)
+        sh  = gc.open_by_key(sid)
+        return [ws.title for ws in sh.worksheets()]
+    except gspread.exceptions.SpreadsheetNotFound:
+        raise ValueError(
+            f"Spreadsheet no encontrado. Verifica el ID/URL y que la hoja "
+            f"este compartida con el service account."
+        )
+    except Exception as exc:
+        log.error("get_sheet_tabs error: %s", exc)
+        raise
+
+
+# ---------------------------------------------------------------------------
+#  write_range_to_sheets — escribe lista plana de valores via batch_update
+# ---------------------------------------------------------------------------
+
+def write_range_to_sheets(
+    spreadsheet_id_or_url: str,
+    sheet_name: str,
+    values: list,
+    mode: str,
+    credentials_path: str = "credentials.json",
+    start_cell: str = "A1",
+    direction: str = "Vertical",
+    stride: int = 1,
+    cell_list_str: str = "",
+) -> dict:
+    """
+    Escribe una lista plana de valores en una hoja de Google Sheets.
+
+    Soporta las mismas 3 modalidades que los writers de Excel:
+      - "Bloque Continuo" : valores en columna a partir de start_cell.
+      - "Salto"           : distribuye con salto N horizontal o vertical.
+      - "Lista de Celdas" : asigna cada valor a la celda explicita (puede
+                            contener rangos: "C20:C22, G20:G22").
+
+    Usa una sola llamada batch_update para minimizar el consumo de cuota
+    y evitar errores 429 (rate limit).
+
+    Parameters
+    ----------
+    spreadsheet_id_or_url : str
+        URL o ID del spreadsheet.
+    sheet_name : str
+        Nombre de la pestana destino.
+    values : list
+        Lista plana de valores a escribir.
+    mode : str
+        Una de: "Bloque Continuo", "Salto", "Lista de Celdas".
+    credentials_path : str
+        Ruta al JSON de service account.
+    start_cell : str
+        Celda de inicio para modos Bloque y Salto. Ej: "C3".
+    direction : str
+        "Horizontal" o "Vertical" (solo modo Salto).
+    stride : int
+        Salto entre celdas (solo modo Salto).
+    cell_list_str : str
+        Expresion de celdas/rangos destino (solo modo Lista).
+        Ej: "C20:C22, G20:G22, K20:K22".
+
+    Returns
+    -------
+    dict
+        {
+          "written" : int,        # cantidad de valores escritos
+          "cells"   : list[str],  # coordenadas A1 destino
+          "detail"  : list[str],  # ["C3=4", "C4=12", ...]
+        }
+
+    Raises
+    ------
+    ImportError      : gspread / google-auth no instalados.
+    FileNotFoundError: credenciales no encontradas.
+    ValueError       : hoja no encontrada o celda invalida.
+    gspread.exceptions.APIError : error de cuota o autenticacion.
+    """
+    if not _GSPREAD_AVAILABLE:
+        raise ImportError(
+            "gspread y google-auth son necesarios.\n"
+            "Instala con: pip install gspread google-auth"
+        )
+    from pathlib import Path as _Path
+    from openpyxl.utils import column_index_from_string, get_column_letter
+
+    creds_p = _Path(credentials_path)
+    if not creds_p.exists():
+        raise FileNotFoundError(
+            f"Credenciales no encontradas: {creds_p.resolve()}"
+        )
+
+    # --- Autenticar y abrir hoja -------------------------------------------
+    try:
+        creds = SACredentials.from_service_account_file(
+            credentials_path, scopes=_SHEETS_SCOPES
+        )
+        gc = gspread.authorize(creds)
+        sid = _extract_spreadsheet_id(spreadsheet_id_or_url)
+        sh  = gc.open_by_key(sid)
+    except gspread.exceptions.SpreadsheetNotFound:
+        raise ValueError(
+            "Spreadsheet no encontrado. Verifica el ID/URL y los permisos."
+        )
+    except Exception as exc:
+        log.error("Error autenticando con Google Sheets: %s", exc)
+        raise
+
+    try:
+        ws = sh.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        available = [w.title for w in sh.worksheets()]
+        raise ValueError(
+            f"Pestana '{sheet_name}' no encontrada. "
+            f"Disponibles: {available}"
+        )
+
+    # --- Calcular coordenadas destino --------------------------------------
+    def _parse_a1(cell: str):
+        """Retorna (row_1based, col_1based) de una celda A1."""
+        import re
+        cell = cell.strip().upper()
+        m = re.match(r"([A-Z]+)(\d+)", cell)
+        if not m:
+            raise ValueError(f"Celda invalida: '{cell}'")
+        col = column_index_from_string(m.group(1))
+        row = int(m.group(2))
+        return row, col
+
+    def _to_a1(row: int, col: int) -> str:
+        return f"{get_column_letter(col)}{row}"
+
+    def _expand_tokens(expr: str) -> list[str]:
+        """Expande expresion mixta de rangos a lista de coordenadas A1."""
+        import re
+        tokens = [t.strip().upper() for t in expr.split(",") if t.strip()]
+        cells = []
+        for tok in tokens:
+            if ":" in tok:
+                a, b = tok.split(":", 1)
+                r1, c1 = _parse_a1(a)
+                r2, c2 = _parse_a1(b)
+                for r in range(r1, r2 + 1):
+                    for c in range(c1, c2 + 1):
+                        cells.append(_to_a1(r, c))
+            else:
+                _parse_a1(tok)  # valida
+                cells.append(tok)
+        return cells
+
+    dest_coords: list[str] = []
+
+    if mode == "Bloque Continuo":
+        r0, c0 = _parse_a1(start_cell)
+        for i in range(len(values)):
+            dest_coords.append(_to_a1(r0 + i, c0))
+
+    elif mode == "Salto":
+        r0, c0 = _parse_a1(start_cell)
+        for i in range(len(values)):
+            if direction == "Horizontal":
+                dest_coords.append(_to_a1(r0, c0 + i * stride))
+            else:
+                dest_coords.append(_to_a1(r0 + i * stride, c0))
+
+    else:  # Lista de Celdas
+        dest_coords = _expand_tokens(cell_list_str)
+
+    # Recortar si hay mas celdas que valores (o viceversa)
+    n = min(len(values), len(dest_coords))
+    values    = values[:n]
+    dest_coords = dest_coords[:n]
+
+    if not values:
+        return {"written": 0, "cells": [], "detail": []}
+
+    # --- Construir batch y enviar ------------------------------------------
+    updates = [
+        {"range": coord, "values": [[val]]}
+        for coord, val in zip(dest_coords, values)
+    ]
+
+    try:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+    except Exception as exc:
+        # Manejo especifico de error 429 (quota)
+        err_str = str(exc)
+        if "429" in err_str or "Quota" in err_str or "quota" in err_str:
+            raise RuntimeError(
+                "Limite de cuota de Google Sheets API (error 429).\n"
+                "Espera unos segundos e intenta de nuevo, o reduce la frecuencia "
+                "de solicitudes."
+            ) from exc
+        log.error("batch_update error: %s", exc)
+        raise
+
+    detail = [f"{c}={v}" for c, v in zip(dest_coords, values)]
+    log.info(
+        "Sheets batch_update | Hoja: '%s' | Celdas: %d | Modo: %s",
+        sheet_name, n, mode,
+    )
+    return {
+        "written": n,
+        "cells":   dest_coords,
+        "detail":  detail,
+    }

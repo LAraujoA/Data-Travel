@@ -29,6 +29,10 @@ if str(ROOT) not in sys.path:
 from src.core.matcher import build_mapping
 from src.core.extractor import extract_month_data
 from src.writers.excel_writer import write_month_data_to_excel
+from src.writers.sheets_writer import (
+    write_range_to_sheets, get_sheet_tabs,
+    _GSPREAD_AVAILABLE as GSPREAD_OK,
+)
 from src.core.range_migrator import (
     extract_range, extract_multi_range, get_sheet_names, match_dest_sheet,
     migrate_range, _expand_cell_tokens, MODES,
@@ -1001,6 +1005,8 @@ class DataTravelApp(ctk.CTk):
         # ── Panel Sheets ───────────────────────────────────────────────────
         self._uni_sheets_pnl = ctk.CTkFrame(c, fg_color="transparent")
         self._uni_sheets_pnl.columnconfigure(1, weight=1)
+
+        # Fila 0: URL / ID
         _muted(self._uni_sheets_pnl, "URL / ID:").grid(
             row=0, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="w")
         self._uni_sheets_url = _entry(
@@ -1008,20 +1014,62 @@ class DataTravelApp(ctk.CTk):
         self._uni_sheets_url.grid(
             row=0, column=1, columnspan=2, sticky="ew",
             padx=(0, CARD_PAD), pady=(0, 6))
-        _muted(self._uni_sheets_pnl, "Hoja destino:").grid(
-            row=1, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="w")
-        self._uni_sheets_tab = _entry(
-            self._uni_sheets_pnl, "Nombre de la hoja", width=200)
-        self._uni_sheets_tab.grid(row=1, column=1, sticky="w", pady=(0, 6))
+
+        # Fila 1: Credenciales + botones
         _muted(self._uni_sheets_pnl, "Credenciales:").grid(
-            row=2, column=0, padx=(CARD_PAD, 8), pady=(0, CARD_PAD), sticky="w")
+            row=1, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="w")
         self._uni_creds_entry = _entry(
             self._uni_sheets_pnl, "credentials.json")
         self._uni_creds_entry.grid(
-            row=2, column=1, sticky="ew", pady=(0, CARD_PAD))
-        _btn(self._uni_sheets_pnl, "🔑  Seleccionar",
-             self._uni_select_creds, width=130).grid(
-             row=2, column=2, padx=(8, CARD_PAD), pady=(0, CARD_PAD))
+            row=1, column=1, sticky="ew", pady=(0, 6))
+        _bf_gs = ctk.CTkFrame(self._uni_sheets_pnl, fg_color="transparent")
+        _bf_gs.grid(row=1, column=2, padx=(8, CARD_PAD), pady=(0, 6))
+        _btn(_bf_gs, "Cargar hojas",
+             self._uni_load_sheets_tabs, color="#2D4A6E",
+             width=120, height=30).pack(side="left", padx=(0, 4))
+        _btn(_bf_gs, "Seleccionar",
+             self._uni_select_creds, color="#374151", hover="#4B5563",
+             width=100, height=30).pack(side="left")
+
+        # Fila 2: Modo de mapeo (mismo esquema que Excel Local)
+        _muted(self._uni_sheets_pnl, "Mapeo:").grid(
+            row=2, column=0, padx=(CARD_PAD, 8), pady=(0, 6), sticky="nw")
+        self._uni_gs_map_mode = ctk.StringVar(value="Mismo nombre")
+        _gs_map_frame = ctk.CTkFrame(self._uni_sheets_pnl, fg_color="transparent")
+        _gs_map_frame.grid(row=2, column=1, columnspan=2, sticky="ew",
+                           padx=(0, CARD_PAD), pady=(0, 6))
+        ctk.CTkRadioButton(
+            _gs_map_frame,
+            text="Mapear a pestana con el mismo nombre (abre confirmacion)",
+            variable=self._uni_gs_map_mode,
+            value="Mismo nombre",
+            command=self._uni_gs_map_mode_change,
+            font=ctk.CTkFont(size=12),
+            fg_color=PURPLE, hover_color=PURPLE_DIM,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ctk.CTkRadioButton(
+            _gs_map_frame,
+            text="Consolidar en una sola hoja:",
+            variable=self._uni_gs_map_mode,
+            value="Consolidar",
+            command=self._uni_gs_map_mode_change,
+            font=ctk.CTkFont(size=12),
+            fg_color=PURPLE, hover_color=PURPLE_DIM,
+        ).grid(row=1, column=0, sticky="w")
+        self._uni_sheets_tab_var = ctk.StringVar(value="")
+        self._uni_sheets_tab_menu = ctk.CTkOptionMenu(
+            _gs_map_frame,
+            variable=self._uni_sheets_tab_var,
+            values=["(carga hojas primero)"],
+            width=210, height=30,
+            fg_color=PURPLE_DIM, button_color=PURPLE,
+            font=ctk.CTkFont(size=11),
+            state="disabled",
+        )
+        self._uni_sheets_tab_menu.grid(row=1, column=1, padx=(10, 0), sticky="w")
+        self._uni_sheets_tabs_hint = _muted(_gs_map_frame, "  (cargar primero)")
+        self._uni_sheets_tabs_hint.grid(row=2, column=0, columnspan=2,
+                                        sticky="w", pady=(2, 0))
 
     # ── U3 Modalidad ──────────────────────────────────────────────────────────
     def _uni_s3_modalidad(self, p):
@@ -1267,6 +1315,37 @@ class DataTravelApp(ctk.CTk):
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 
+    # ── Google Sheets: cargar hojas y modo de mapeo ──────────────────────────
+    def _uni_load_sheets_tabs(self):
+        url    = self._uni_sheets_url.get().strip()
+        creds  = self._uni_creds_entry.get().strip() or "credentials.json"
+        if not url:
+            messagebox.showwarning("URL requerida",
+                "Ingresa la URL o ID del Spreadsheet.")
+            return
+        if not GSPREAD_OK:
+            messagebox.showerror("gspread no instalado",
+                "Instala gspread con: pip install gspread google-auth")
+            return
+        try:
+            tabs = get_sheet_tabs(url, creds)
+            self._uni_sheets_tab_menu.configure(values=tabs, state="normal")
+            self._uni_sheets_tab_var.set(tabs[0])
+            self._uni_sheets_tabs_hint.configure(
+                text=f"  {len(tabs)} hoja(s) encontrada(s)",
+                text_color=SUCCESS)
+            # Guardar para el MappingDialog
+            self._uni_gs_tabs_cache = tabs
+            self._uni_log_msg(f"Hojas Sheets cargadas: {tabs}")
+        except Exception as exc:
+            messagebox.showerror("Error al cargar hojas", str(exc))
+
+    def _uni_gs_map_mode_change(self):
+        if self._uni_gs_map_mode.get() == "Consolidar":
+            self._uni_sheets_tab_menu.configure(state="normal")
+        else:
+            self._uni_sheets_tab_menu.configure(state="disabled")
+
     def _uni_select_creds(self):
         p = filedialog.askopenfilename(
             title="credentials.json",
@@ -1445,14 +1524,41 @@ class DataTravelApp(ctk.CTk):
         # ── Si modo "Mismo nombre" en Excel: mostrar dialogo de confirmacion ──
         confirmed_jobs: list[dict] | None = None
 
+        # Determinar hojas destino disponibles para el MappingDialog
+        dest_sheets_avail: list[str] = []
+        need_dialog = False
+
         if dest_mode == "Excel Local" and map_mode == "Mismo nombre":
-            dest_sheets_avail = []
             if self._uni_dest_file and self._uni_dest_file.exists():
                 try:
                     dest_sheets_avail = get_sheet_names(self._uni_dest_file)
                 except Exception:
                     pass
+            need_dialog = True
 
+        elif dest_mode == "Google Sheets":
+            gs_map = self._uni_gs_map_mode.get()
+            if gs_map == "Mismo nombre":
+                tabs_cache = getattr(self, "_uni_gs_tabs_cache", [])
+                if not tabs_cache:
+                    # Intentar cargar en el momento
+                    url   = self._uni_sheets_url.get().strip()
+                    creds = self._uni_creds_entry.get().strip() or "credentials.json"
+                    if url and GSPREAD_OK:
+                        try:
+                            tabs_cache = get_sheet_tabs(url, creds)
+                            self._uni_gs_tabs_cache = tabs_cache
+                        except Exception as exc:
+                            messagebox.showerror("Error Google Sheets", str(exc))
+                            return
+                    else:
+                        messagebox.showwarning("Hojas no cargadas",
+                            "Presiona 'Cargar hojas' en la seccion de destino.")
+                        return
+                dest_sheets_avail = tabs_cache
+                need_dialog = True
+
+        if need_dialog:
             # Calcular matches previos (sin escribir)
             dialog_rows: list[dict] = []
             for fp, src_sheet in jobs_raw:
@@ -1470,11 +1576,11 @@ class DataTravelApp(ctk.CTk):
                     "score":      score,
                 })
 
-            # Abrir dialogo modal
+            # Abrir MappingDialog modal (igual para Excel y Sheets)
             dlg = MappingDialog(self, dialog_rows, dest_sheets_avail)
-            self.wait_window(dlg)       # bloquea hasta que el usuario confirme/cancele
+            self.wait_window(dlg)
 
-            if dlg.result is None:      # cancelado
+            if dlg.result is None:
                 return
             if not dlg.result:
                 messagebox.showinfo("Sin filas activas",
@@ -1483,6 +1589,15 @@ class DataTravelApp(ctk.CTk):
             confirmed_jobs = dlg.result
 
         # ── Construir params y lanzar worker ──────────────────────────────────
+        # Calcular hoja Sheets fija (modo Consolidar)
+        gs_tab_fixed = ""
+        if dest_mode == "Google Sheets":
+            gs_mode = self._uni_gs_map_mode.get()
+            if gs_mode == "Consolidar":
+                gs_tab_fixed = self._uni_sheets_tab_var.get()
+            else:
+                gs_tab_fixed = ""  # el dialogo asigna por job
+
         params = {
             "src_files":       src_files,
             "selected_sheets": selected_sheets,
@@ -1499,8 +1614,11 @@ class DataTravelApp(ctk.CTk):
             "dest_file_name":  (self._uni_dest_file.name
                                 if self._uni_dest_file else ""),
             "sheets_url":      self._uni_sheets_url.get().strip(),
-            "sheets_tab":      (self._uni_sheets_tab.get().strip()
-                                if hasattr(self, "_uni_sheets_tab") else ""),
+            "sheets_creds":    (self._uni_creds_entry.get().strip()
+                                or "credentials.json"),
+            "sheets_tab_fixed": gs_tab_fixed,
+            "gs_map_mode":     getattr(self, "_uni_gs_map_mode",
+                               ctk.StringVar(value="Mismo nombre")).get(),
             # Jobs pre-confirmados (None = el worker calcula su propio mapeo)
             "confirmed_jobs":  confirmed_jobs,
         }
@@ -1722,9 +1840,53 @@ class DataTravelApp(ctk.CTk):
                         failed.append(label)
 
                 else:  # Google Sheets
-                    self._qlog("uni",
-                        "Google Sheets: soporte universal en desarrollo.", "warn")
-                    failed.append(label)
+                    sheets_url    = p["sheets_url"]
+                    sheets_creds  = p.get("sheets_creds", "credentials.json")
+                    # Si confirmed_jobs ya asigno dest_sh, usarlo;
+                    # de lo contrario usar gs_tab_fixed o label como fallback
+                    if "dest_sh" not in locals():
+                        gs_mode = p.get("gs_map_mode", "Consolidar")
+                        if gs_mode == "Consolidar":
+                            dest_sh = p.get("sheets_tab_fixed", "")
+                        else:
+                            dest_sh = src_sheet if src_sheet else fp.stem
+                    if not sheets_url:
+                        self._qlog("uni",
+                            "    Google Sheets: URL no configurada.", "error")
+                        failed.append(label)
+                    elif not dest_sh:
+                        self._qlog("uni",
+                            "    Google Sheets: hoja destino no especificada.", "error")
+                        failed.append(label)
+                    else:
+                        self._qlog("uni",
+                            f"    Google Sheets -> hoja '{dest_sh}'")
+                        try:
+                            result = write_range_to_sheets(
+                                spreadsheet_id_or_url = sheets_url,
+                                sheet_name  = dest_sh,
+                                values      = values,
+                                mode        = paste_mode,
+                                credentials_path = sheets_creds,
+                                start_cell  = start_cell,
+                                direction   = direction,
+                                stride      = stride,
+                                cell_list_str = cell_list,
+                            )
+                            cells_total += result["written"]
+                            det = result.get("detail", [])
+                            prev = ", ".join(det[:6])
+                            if len(det) > 6:
+                                prev += f" ... (+{len(det)-6})"
+                            self._qlog("uni", f"    Sheets guardado: {prev}")
+                        except RuntimeError as exc:
+                            # Error 429 / cuota
+                            self._qlog("uni", f"    {exc}", "warn")
+                            failed.append(label)
+                        except Exception as exc:
+                            self._qlog("uni",
+                                f"    Error Sheets: {exc}", "error")
+                            failed.append(label)
 
                 self._q.put(("uni_progress", (idx + 1) / total))
 
