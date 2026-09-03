@@ -4,22 +4,25 @@
 ![CustomTkinter](https://img.shields.io/badge/CustomTkinter-UI-blueviolet.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-**Data-Travel** es una herramienta moderna de automatización de escritorio diseñada para la extracción, validación y migración masiva de datos estructurados entre libros de Excel locales y hojas de cálculo en la nube (Google Sheets). Fue concebida originalmente para consolidar y trasladar reportes POA del MINSAL El Salvador de manera eficiente y a prueba de errores.
+**Data-Travel** es una herramienta moderna de automatización de escritorio diseñada para la extracción, validación y migración masiva de datos estructurados entre libros de Excel locales y hojas de cálculo en la nube (Google Sheets). Fue concebida originalmente para consolidar y trasladar reportes de diferentes tipos de manera eficiente y a prueba de errores.
 
 ---
 
-## ✨ Características Principales
+## Características Principales
 
 *   **Integración Híbrida (Local y Nube):**
     *   **Excel Local:** Soporte nativo y rápido usando `openpyxl`.
     *   **Google Sheets:** Integración con la API de Google a través de `gspread`, implementando estrategias de `batch_update` para minimizar el consumo de cuotas y evitar bloqueos por rate limits.
+    
 *   **Motor de Coincidencia (Fuzzy Matching):**
     *   Mapeo inteligente de nombres de hojas/pestañas entre origen y destino utilizando `rapidfuzz` para lidiar con errores tipográficos, diferencias de mayúsculas/minúsculas o acentos.
     *   **Confirmación Interactiva:** Diálogo modal (MappingDialog) para revisar y aprobar las rutas de migración propuestas por el sistema antes de ejecutar la escritura.
+
 *   **Modalidades de Transferencia (Migrador Universal):**
     *   **Bloque Continuo:** Extrae y pega matrices completas de datos (ej. `A2:D10`).
     *   **Saltos de Filas/Columnas:** Permite transferir datos lineales (1D) hacia el destino siguiendo un paso o _stride_ numérico configurable.
     *   **Listas de Celdas:** Parseo robusto para procesar selecciones múltiples no contiguas (ej. `C20, C21, C22` o `C20:C22, G20:G22`).
+    
 *   **Interfaz Gráfica Moderna (GUI):**
     *   Desarrollada sobre `CustomTkinter`.
     *   Soporte dinámico y completo para temas **Claro y Oscuro** sin artefactos visuales, con diseño elegante basado en tarjetas elevadas.
@@ -56,8 +59,6 @@ python -m venv venv
 # Activar en Windows
 venv\Scripts\activate
 
-# (Activar en Linux/Mac)
-# source venv/bin/activate
 ```
 
 ### 3. Instalar dependencias
@@ -100,4 +101,4 @@ El proceso:
 
 Este proyecto está bajo la licencia **MIT**. Para más detalles, consulta el archivo [LICENSE](LICENSE) incluido en la raíz de este repositorio.
 
-Copyright (c) 2026 Luis Ricardo Araujo Chilin (LAraujoA)
+Copyright (c) 2026 Luis Araujo (LAraujoA)
