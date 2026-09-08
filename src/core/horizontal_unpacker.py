@@ -117,7 +117,7 @@ def extract_horizontal_blocks(fp: Path, src_sheet: str, blocks: list[dict], row_
         
         for src_r, dest_r in row_mapping.items():
             row_vals = []
-            for c in range(col_start, col_end + 1):
+            for c in range(col_start +1, col_end + 1):
                 row_vals.append(ws.cell(row=src_r, column=c).value)
             
             updates.append({
