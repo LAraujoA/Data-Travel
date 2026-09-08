@@ -1263,7 +1263,7 @@ class DataTravelApp(ctk.CTk):
             self._uni_single_pnl.grid(
                 row=2, column=0, columnspan=3, sticky="ew",
                 padx=CARD_PAD, pady=(0, 6))
-            self._uni_unpack_pnl.grid()
+            self._uni_unpack_pnl.grid(row=4, column=0, columnspan=3, sticky="ew", padx=14, pady=(0, 14))
             if hasattr(self, "frame_step_03"):
                 self.frame_step_03.pack_forget()
 
@@ -1359,11 +1359,7 @@ class DataTravelApp(ctk.CTk):
         else:
             self._uni_dest_sheet_menu.configure(state="disabled")
             
-        if hasattr(self, "_uni_unpack_pnl"):
-            if self._uni_dest_map_mode.get() == "Desempaquetador":
-                self._uni_unpack_pnl.grid()
-            else:
-                self._uni_unpack_pnl.grid_remove()
+
 
     def _uni_select_dest(self):
         p = filedialog.askopenfilename(
@@ -1422,11 +1418,7 @@ class DataTravelApp(ctk.CTk):
         else:
             self._uni_sheets_tab_menu.configure(state="disabled")
             
-        if hasattr(self, "_uni_unpack_pnl"):
-            if self._uni_gs_map_mode.get() == "Desempaquetador":
-                self._uni_unpack_pnl.grid()
-            else:
-                self._uni_unpack_pnl.grid_remove()
+
 
     def _uni_select_creds(self):
         p = filedialog.askopenfilename(
