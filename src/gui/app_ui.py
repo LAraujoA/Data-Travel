@@ -837,7 +837,7 @@ class DataTravelApp(ctk.CTk):
         # ── Modo de seleccion (1 archivo / multiples) ──────────────────────
         self._uni_src_mode = ctk.StringVar(value="Archivo Unico")
         ctk.CTkSegmentedButton(
-            c, values=["Archivo Unico", "Multiples Archivos"],
+            c, values=["Archivo Unico", "Multiples Archivos", "Desempaquetador Horizontal"],
             variable=self._uni_src_mode,
             command=self._uni_src_mode_change,
             height=32, font=ctk.CTkFont(size=12),
@@ -918,10 +918,14 @@ class DataTravelApp(ctk.CTk):
         # (no se muestra hasta que se active "Multiples Archivos")
 
         # ── Rango de origen ────────────────────────────────────────────────
-        _muted(c, "Rango:").grid(
-            row=3, column=0, padx=(CARD_PAD, 8), pady=(0, CARD_PAD), sticky="w")
-        rf = ctk.CTkFrame(c, fg_color="transparent")
-        rf.grid(row=3, column=1, columnspan=2, sticky="ew",
+        self._uni_range_pnl = ctk.CTkFrame(c, fg_color="transparent")
+        self._uni_range_pnl.columnconfigure(1, weight=1)
+        self._uni_range_pnl.grid(row=3, column=0, columnspan=3, sticky="ew")
+
+        _muted(self._uni_range_pnl, "Rango:").grid(
+            row=0, column=0, padx=(CARD_PAD, 8), pady=(0, CARD_PAD), sticky="w")
+        rf = ctk.CTkFrame(self._uni_range_pnl, fg_color="transparent")
+        rf.grid(row=0, column=1, columnspan=2, sticky="ew",
                 pady=(0, CARD_PAD), padx=(0, CARD_PAD))
         self._uni_range_entry = _entry(
             rf, "ej: D6:D15  o  D6:D10, G6:G10  o  D6, D7, D8", width=270)
@@ -932,6 +936,37 @@ class DataTravelApp(ctk.CTk):
         self._uni_preview_btn.pack(side="left", padx=(10, 0))
         self._uni_range_info = _muted(rf, "")
         self._uni_range_info.pack(side="left", padx=(10, 0))
+
+        # ── Panel Desempaquetador Horizontal ───────────────────────────────
+        self._uni_unpack_pnl = ctk.CTkFrame(c, fg_color="#1E293B", corner_radius=6, border_width=1, border_color="#334155")
+        self._uni_unpack_pnl.columnconfigure((1, 3, 5), weight=1)
+        self._uni_unpack_pnl.grid(row=4, column=0, columnspan=3, sticky="ew", padx=CARD_PAD, pady=(0, CARD_PAD))
+        self._uni_unpack_pnl.grid_remove() # Oculto por defecto
+
+        _muted(self._uni_unpack_pnl, "Fila Etiqueta:").grid(row=0, column=0, padx=(8,4), pady=(8,4), sticky="w")
+        self._unpack_row_lbl = _entry(self._uni_unpack_pnl, "Ej: 2", width=60)
+        self._unpack_row_lbl.grid(row=0, column=1, padx=(0,16), pady=(8,4), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Col. Inicial:").grid(row=0, column=2, padx=(0,4), pady=(8,4), sticky="w")
+        self._unpack_col_start = _entry(self._uni_unpack_pnl, "Ej: B", width=60)
+        self._unpack_col_start.grid(row=0, column=3, padx=(0,16), pady=(8,4), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Ancho (Cols):").grid(row=0, column=4, padx=(0,4), pady=(8,4), sticky="w")
+        self._unpack_col_width = _entry(self._uni_unpack_pnl, "Ej: 5", width=60)
+        self._unpack_col_width.grid(row=0, column=5, padx=(0,8), pady=(8,4), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Salto Total:").grid(row=1, column=0, padx=(8,4), pady=(0,8), sticky="w")
+        self._unpack_stride = _entry(self._uni_unpack_pnl, "Ej: 6", width=60)
+        self._unpack_stride.grid(row=1, column=1, padx=(0,16), pady=(0,8), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Mapeo Filas:").grid(row=1, column=2, padx=(0,4), pady=(0,8), sticky="w")
+        self._unpack_row_map = _entry(self._uni_unpack_pnl, "Ej: 2:16, 3:18", width=140)
+        self._unpack_row_map.grid(row=1, column=3, padx=(0,16), pady=(0,8), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Cols Destino:").grid(row=1, column=4, padx=(0,4), pady=(0,8), sticky="w")
+        self._unpack_col_dest = _entry(self._uni_unpack_pnl, "Ej: S, V, Y...", width=140)
+        self._unpack_col_dest.grid(row=1, column=5, padx=(0,8), pady=(0,8), sticky="w")
+
 
     # ── U2 Destino ────────────────────────────────────────────────────────────
     def _uni_s2_destino(self, p):
@@ -999,15 +1034,7 @@ class DataTravelApp(ctk.CTk):
             fg_color=PURPLE, hover_color=PURPLE_DIM,
         ).grid(row=1, column=0, sticky="w", pady=(0, 4))
 
-        ctk.CTkRadioButton(
-            map_frame,
-            text="Desempaquetar bloques horizontales a multiples pestanas",
-            variable=self._uni_dest_map_mode,
-            value="Desempaquetador",
-            command=self._uni_map_mode_change,
-            font=ctk.CTkFont(size=12),
-            fg_color=PURPLE, hover_color=PURPLE_DIM,
-        ).grid(row=2, column=0, columnspan=2, sticky="w")
+
 
         self._uni_dest_sheet_var = ctk.StringVar(value="")
         self._uni_dest_sheet_menu = ctk.CTkOptionMenu(
@@ -1077,15 +1104,7 @@ class DataTravelApp(ctk.CTk):
             fg_color=PURPLE, hover_color=PURPLE_DIM,
         ).grid(row=1, column=0, sticky="w", pady=(0, 4))
 
-        ctk.CTkRadioButton(
-            _gs_map_frame,
-            text="Desempaquetar bloques horizontales a multiples pestanas",
-            variable=self._uni_gs_map_mode,
-            value="Desempaquetador",
-            command=self._uni_gs_map_mode_change,
-            font=ctk.CTkFont(size=12),
-            fg_color=PURPLE, hover_color=PURPLE_DIM,
-        ).grid(row=2, column=0, columnspan=2, sticky="w")
+
         self._uni_sheets_tab_var = ctk.StringVar(value="")
         self._uni_sheets_tab_menu = ctk.CTkOptionMenu(
             _gs_map_frame,
@@ -1101,39 +1120,11 @@ class DataTravelApp(ctk.CTk):
         self._uni_sheets_tabs_hint.grid(row=1, column=2,
                                         sticky="w", pady=(0, 0), padx=(8, 0))
 
-        # ── Panel Desempaquetador Horizontal ───────────────────────────────
-        self._uni_unpack_pnl = ctk.CTkFrame(c, fg_color="#1E293B", corner_radius=6, border_width=1, border_color="#334155")
-        self._uni_unpack_pnl.columnconfigure((1, 3, 5), weight=1)
-        self._uni_unpack_pnl.grid(row=3, column=0, columnspan=3, sticky="ew", padx=CARD_PAD, pady=(8, 0))
-        self._uni_unpack_pnl.grid_remove() # Oculto por defecto
-
-        _muted(self._uni_unpack_pnl, "Fila Etiqueta:").grid(row=0, column=0, padx=(8,4), pady=(8,4), sticky="w")
-        self._unpack_row_lbl = _entry(self._uni_unpack_pnl, "Ej: 2", width=60)
-        self._unpack_row_lbl.grid(row=0, column=1, padx=(0,16), pady=(8,4), sticky="w")
-
-        _muted(self._uni_unpack_pnl, "Col. Inicial:").grid(row=0, column=2, padx=(0,4), pady=(8,4), sticky="w")
-        self._unpack_col_start = _entry(self._uni_unpack_pnl, "Ej: B", width=60)
-        self._unpack_col_start.grid(row=0, column=3, padx=(0,16), pady=(8,4), sticky="w")
-
-        _muted(self._uni_unpack_pnl, "Ancho (Cols):").grid(row=0, column=4, padx=(0,4), pady=(8,4), sticky="w")
-        self._unpack_col_width = _entry(self._uni_unpack_pnl, "Ej: 5", width=60)
-        self._unpack_col_width.grid(row=0, column=5, padx=(0,8), pady=(8,4), sticky="w")
-
-        _muted(self._uni_unpack_pnl, "Salto Total:").grid(row=1, column=0, padx=(8,4), pady=(0,8), sticky="w")
-        self._unpack_stride = _entry(self._uni_unpack_pnl, "Ej: 6", width=60)
-        self._unpack_stride.grid(row=1, column=1, padx=(0,16), pady=(0,8), sticky="w")
-
-        _muted(self._uni_unpack_pnl, "Mapeo Filas:").grid(row=1, column=2, padx=(0,4), pady=(0,8), sticky="w")
-        self._unpack_row_map = _entry(self._uni_unpack_pnl, "Ej: 2:16, 3:18", width=140)
-        self._unpack_row_map.grid(row=1, column=3, padx=(0,16), pady=(0,8), sticky="w")
-
-        _muted(self._uni_unpack_pnl, "Cols Destino:").grid(row=1, column=4, padx=(0,4), pady=(0,8), sticky="w")
-        self._unpack_col_dest = _entry(self._uni_unpack_pnl, "Ej: S, V, Y...", width=140)
-        self._unpack_col_dest.grid(row=1, column=5, padx=(0,8), pady=(0,8), sticky="w")
 
     # ── U3 Modalidad ──────────────────────────────────────────────────────────
     def _uni_s3_modalidad(self, p):
         c = _card(p); c.pack(fill="x", padx=14, pady=5)
+        self.frame_step_03 = c
         c.columnconfigure(0, weight=1)
         _section_label(c, "03  ·  Modalidad de pegado").grid(
             row=0, column=0, columnspan=4, sticky="w",
@@ -1250,14 +1241,31 @@ class DataTravelApp(ctk.CTk):
     def _uni_src_mode_change(self, val):
         if val == "Archivo Unico":
             self._uni_multi_pnl.grid_forget()
+            self._uni_unpack_pnl.grid_remove()
             self._uni_single_pnl.grid(
                 row=2, column=0, columnspan=3, sticky="ew",
                 padx=CARD_PAD, pady=(0, 6))
-        else:
+            self._uni_range_pnl.grid(row=3, column=0, columnspan=3, sticky="ew")
+            if hasattr(self, "frame_step_03"):
+                self.frame_step_03.pack(fill="x", padx=14, pady=5)
+        elif val == "Multiples Archivos":
             self._uni_single_pnl.grid_forget()
+            self._uni_unpack_pnl.grid_remove()
             self._uni_multi_pnl.grid(
                 row=2, column=0, columnspan=3, sticky="ew",
                 padx=CARD_PAD, pady=(0, 6))
+            self._uni_range_pnl.grid(row=3, column=0, columnspan=3, sticky="ew")
+            if hasattr(self, "frame_step_03"):
+                self.frame_step_03.pack(fill="x", padx=14, pady=5)
+        elif val == "Desempaquetador Horizontal":
+            self._uni_multi_pnl.grid_forget()
+            self._uni_range_pnl.grid_remove()
+            self._uni_single_pnl.grid(
+                row=2, column=0, columnspan=3, sticky="ew",
+                padx=CARD_PAD, pady=(0, 6))
+            self._uni_unpack_pnl.grid()
+            if hasattr(self, "frame_step_03"):
+                self.frame_step_03.pack_forget()
 
     # ── Logica: selector archivos ─────────────────────────────────────────────
     def _uni_select_single(self):
@@ -1541,11 +1549,12 @@ class DataTravelApp(ctk.CTk):
         if self._uni_running:
             return
             
-        dest_mode = self._uni_dest_mode.get()
-        map_mode = self._uni_dest_map_mode.get() if dest_mode == "Excel Local" else self._uni_gs_map_mode.get()
-        if map_mode == "Desempaquetador":
+        if self._uni_src_mode.get() == "Desempaquetador Horizontal":
             self._unpack_on_transfer()
             return
+            
+        dest_mode = self._uni_dest_mode.get()
+        map_mode = self._uni_dest_map_mode.get() if dest_mode == "Excel Local" else self._uni_gs_map_mode.get()
 
         # ── Validaciones ──────────────────────────────────────────────────────
         src_files = self._get_uni_src_files()
