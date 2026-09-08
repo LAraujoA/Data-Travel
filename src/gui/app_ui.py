@@ -287,12 +287,9 @@ class MappingDialog(ctk.CTkToplevel):
             dest_sel = self._dest_vars[i].get()
             if dest_sel == OMIT_LABEL:
                 continue
-            confirmed.append({
-                "fp":        row["fp"],
-                "src_sheet": row["src_sheet"],
-                "dest_sh":   dest_sel,
-                "label":     row["label"],
-            })
+            confirmed_row = row.copy()
+            confirmed_row["dest_sh"] = dest_sel
+            confirmed.append(confirmed_row)
         self.result = confirmed
         self.grab_release()
         self.destroy()
@@ -1101,8 +1098,8 @@ class DataTravelApp(ctk.CTk):
         )
         self._uni_sheets_tab_menu.grid(row=1, column=1, padx=(10, 0), sticky="w")
         self._uni_sheets_tabs_hint = _muted(_gs_map_frame, "  (cargar primero)")
-        self._uni_sheets_tabs_hint.grid(row=2, column=0, columnspan=2,
-                                        sticky="w", pady=(2, 0))
+        self._uni_sheets_tabs_hint.grid(row=1, column=2,
+                                        sticky="w", pady=(0, 0), padx=(8, 0))
 
         # ── Panel Desempaquetador Horizontal ───────────────────────────────
         self._uni_unpack_pnl = ctk.CTkFrame(c, fg_color="#1E293B", corner_radius=6, border_width=1, border_color="#334155")
@@ -1353,6 +1350,12 @@ class DataTravelApp(ctk.CTk):
             self._uni_dest_sheet_menu.configure(state="normal")
         else:
             self._uni_dest_sheet_menu.configure(state="disabled")
+            
+        if hasattr(self, "_uni_unpack_pnl"):
+            if self._uni_dest_map_mode.get() == "Desempaquetador":
+                self._uni_unpack_pnl.grid()
+            else:
+                self._uni_unpack_pnl.grid_remove()
 
     def _uni_select_dest(self):
         p = filedialog.askopenfilename(
@@ -1410,6 +1413,12 @@ class DataTravelApp(ctk.CTk):
             self._uni_sheets_tab_menu.configure(state="normal")
         else:
             self._uni_sheets_tab_menu.configure(state="disabled")
+            
+        if hasattr(self, "_uni_unpack_pnl"):
+            if self._uni_gs_map_mode.get() == "Desempaquetador":
+                self._uni_unpack_pnl.grid()
+            else:
+                self._uni_unpack_pnl.grid_remove()
 
     def _uni_select_creds(self):
         p = filedialog.askopenfilename(
@@ -1813,7 +1822,9 @@ class DataTravelApp(ctk.CTk):
             self._q.put(("uni_finish", "Completado exitosamente"))
             
         except Exception as e:
-            self._qlog("uni", f"Error en Desempaquetador: {e}", "error")
+            import traceback
+            tb = traceback.format_exc()
+            self._qlog("uni", f"Error en Desempaquetador: {e}\n{tb}", "error")
             self._q.put(("uni_finish", f"Error: {e}"))
 
     def _uni_worker(self, p: dict):
