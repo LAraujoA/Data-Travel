@@ -1000,7 +1000,17 @@ class DataTravelApp(ctk.CTk):
             command=self._uni_map_mode_change,
             font=ctk.CTkFont(size=12),
             fg_color=PURPLE, hover_color=PURPLE_DIM,
-        ).grid(row=1, column=0, sticky="w")
+        ).grid(row=1, column=0, sticky="w", pady=(0, 4))
+
+        ctk.CTkRadioButton(
+            map_frame,
+            text="Desempaquetar bloques horizontales a multiples pestanas",
+            variable=self._uni_dest_map_mode,
+            value="Desempaquetador",
+            command=self._uni_map_mode_change,
+            font=ctk.CTkFont(size=12),
+            fg_color=PURPLE, hover_color=PURPLE_DIM,
+        ).grid(row=2, column=0, columnspan=2, sticky="w")
 
         self._uni_dest_sheet_var = ctk.StringVar(value="")
         self._uni_dest_sheet_menu = ctk.CTkOptionMenu(
@@ -1068,7 +1078,17 @@ class DataTravelApp(ctk.CTk):
             command=self._uni_gs_map_mode_change,
             font=ctk.CTkFont(size=12),
             fg_color=PURPLE, hover_color=PURPLE_DIM,
-        ).grid(row=1, column=0, sticky="w")
+        ).grid(row=1, column=0, sticky="w", pady=(0, 4))
+
+        ctk.CTkRadioButton(
+            _gs_map_frame,
+            text="Desempaquetar bloques horizontales a multiples pestanas",
+            variable=self._uni_gs_map_mode,
+            value="Desempaquetador",
+            command=self._uni_gs_map_mode_change,
+            font=ctk.CTkFont(size=12),
+            fg_color=PURPLE, hover_color=PURPLE_DIM,
+        ).grid(row=2, column=0, columnspan=2, sticky="w")
         self._uni_sheets_tab_var = ctk.StringVar(value="")
         self._uni_sheets_tab_menu = ctk.CTkOptionMenu(
             _gs_map_frame,
@@ -1083,6 +1103,36 @@ class DataTravelApp(ctk.CTk):
         self._uni_sheets_tabs_hint = _muted(_gs_map_frame, "  (cargar primero)")
         self._uni_sheets_tabs_hint.grid(row=2, column=0, columnspan=2,
                                         sticky="w", pady=(2, 0))
+
+        # ── Panel Desempaquetador Horizontal ───────────────────────────────
+        self._uni_unpack_pnl = ctk.CTkFrame(c, fg_color="#1E293B", corner_radius=6, border_width=1, border_color="#334155")
+        self._uni_unpack_pnl.columnconfigure((1, 3, 5), weight=1)
+        self._uni_unpack_pnl.grid(row=3, column=0, columnspan=3, sticky="ew", padx=CARD_PAD, pady=(8, 0))
+        self._uni_unpack_pnl.grid_remove() # Oculto por defecto
+
+        _muted(self._uni_unpack_pnl, "Fila Etiqueta:").grid(row=0, column=0, padx=(8,4), pady=(8,4), sticky="w")
+        self._unpack_row_lbl = _entry(self._uni_unpack_pnl, "Ej: 2", width=60)
+        self._unpack_row_lbl.grid(row=0, column=1, padx=(0,16), pady=(8,4), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Col. Inicial:").grid(row=0, column=2, padx=(0,4), pady=(8,4), sticky="w")
+        self._unpack_col_start = _entry(self._uni_unpack_pnl, "Ej: B", width=60)
+        self._unpack_col_start.grid(row=0, column=3, padx=(0,16), pady=(8,4), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Ancho (Cols):").grid(row=0, column=4, padx=(0,4), pady=(8,4), sticky="w")
+        self._unpack_col_width = _entry(self._uni_unpack_pnl, "Ej: 5", width=60)
+        self._unpack_col_width.grid(row=0, column=5, padx=(0,8), pady=(8,4), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Salto Total:").grid(row=1, column=0, padx=(8,4), pady=(0,8), sticky="w")
+        self._unpack_stride = _entry(self._uni_unpack_pnl, "Ej: 6", width=60)
+        self._unpack_stride.grid(row=1, column=1, padx=(0,16), pady=(0,8), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Mapeo Filas:").grid(row=1, column=2, padx=(0,4), pady=(0,8), sticky="w")
+        self._unpack_row_map = _entry(self._uni_unpack_pnl, "Ej: 2:16, 3:18", width=140)
+        self._unpack_row_map.grid(row=1, column=3, padx=(0,16), pady=(0,8), sticky="w")
+
+        _muted(self._uni_unpack_pnl, "Cols Destino:").grid(row=1, column=4, padx=(0,4), pady=(0,8), sticky="w")
+        self._unpack_col_dest = _entry(self._uni_unpack_pnl, "Ej: S, V, Y...", width=140)
+        self._unpack_col_dest.grid(row=1, column=5, padx=(0,8), pady=(0,8), sticky="w")
 
     # ── U3 Modalidad ──────────────────────────────────────────────────────────
     def _uni_s3_modalidad(self, p):
@@ -1291,10 +1341,12 @@ class DataTravelApp(ctk.CTk):
             self._uni_sheets_pnl.grid_forget()
             self._uni_excel_pnl.grid(row=2, column=0, columnspan=3,
                                       sticky="ew")
+            self._uni_map_mode_change()
         else:
             self._uni_excel_pnl.grid_forget()
             self._uni_sheets_pnl.grid(row=2, column=0, columnspan=3,
                                        sticky="ew")
+            self._uni_gs_map_mode_change()
 
     def _uni_map_mode_change(self):
         if self._uni_dest_map_mode.get() == "Consolidar":
@@ -1479,6 +1531,12 @@ class DataTravelApp(ctk.CTk):
     def _uni_on_transfer(self):
         if self._uni_running:
             return
+            
+        dest_mode = self._uni_dest_mode.get()
+        map_mode = self._uni_dest_map_mode.get() if dest_mode == "Excel Local" else self._uni_gs_map_mode.get()
+        if map_mode == "Desempaquetador":
+            self._unpack_on_transfer()
+            return
 
         # ── Validaciones ──────────────────────────────────────────────────────
         src_files = self._get_uni_src_files()
@@ -1644,6 +1702,119 @@ class DataTravelApp(ctk.CTk):
 
         threading.Thread(target=self._uni_worker,
                          args=(params,), daemon=True).start()
+
+
+    # ── Desempaquetador Horizontal ────────────────────────────────────────────
+    def _unpack_on_transfer(self):
+        src_files = self._get_uni_src_files()
+        if not src_files:
+            messagebox.showwarning("Origen", "Selecciona archivo origen.")
+            return
+            
+        # Leer inputs
+        try:
+            id_row = int(self._unpack_row_lbl.get().strip())
+            col_start = self._unpack_col_start.get().strip()
+            width = int(self._unpack_col_width.get().strip())
+            stride = int(self._unpack_stride.get().strip())
+            row_map_str = self._unpack_row_map.get().strip()
+            col_dest_str = self._unpack_col_dest.get().strip()
+            
+            from src.core.horizontal_unpacker import parse_row_mapping, parse_col_dest, scan_horizontal_blocks
+            row_mapping = parse_row_mapping(row_map_str)
+            col_dest = parse_col_dest(col_dest_str)
+        except Exception as e:
+            messagebox.showwarning("Configuracion Invalida", str(e))
+            return
+            
+        # Determinar destino
+        dest_mode = self._uni_dest_mode.get()
+        dest_sheets_avail = []
+        if dest_mode == "Google Sheets":
+            url = self._uni_sheets_url.get().strip()
+            creds = self._uni_creds_entry.get().strip() or "credentials.json"
+            if not url: return messagebox.showwarning("Error", "URL requerida")
+            tabs_cache = getattr(self, "_uni_gs_tabs_cache", [])
+            if not tabs_cache:
+                try:
+                    tabs_cache = get_sheet_tabs(url, creds)
+                    self._uni_gs_tabs_cache = tabs_cache
+                except Exception as exc:
+                    return messagebox.showerror("Error GS", str(exc))
+            dest_sheets_avail = tabs_cache
+        else:
+            return messagebox.showwarning("No soportado", "El modo desempaquetador requiere Google Sheets actualmente para batching.")
+            
+        src_fp = src_files[0]
+        sel_sheets = self._uni_get_selected_sheets()
+        src_sheet = sel_sheets[0] if sel_sheets else None
+        
+        # Scan blocks
+        try:
+            dialog_rows = scan_horizontal_blocks(
+                fp=src_fp, src_sheet=src_sheet, id_row=id_row, col_start=col_start,
+                width=width, stride=stride, dest_sheets=dest_sheets_avail
+            )
+        except Exception as e:
+            return messagebox.showerror("Error Escaneo", str(e))
+            
+        if not dialog_rows:
+            return messagebox.showinfo("Sin Bloques", "No se encontraron bloques en la fila.")
+            
+        dlg = MappingDialog(self, dialog_rows, dest_sheets_avail)
+        self.wait_window(dlg)
+        
+        if not dlg.result:
+            return
+            
+        confirmed_blocks = dlg.result
+        
+        params = {
+            "dest_mode": dest_mode,
+            "url": url,
+            "creds": creds,
+            "src_fp": src_fp,
+            "src_sheet": src_sheet,
+            "blocks": confirmed_blocks,
+            "row_mapping": row_mapping,
+            "col_dest": col_dest
+        }
+        
+        self._uni_running = True
+        self._uni_run_btn.configure(state="disabled", text="⏳  Procesando...")
+        self._uni_bar.set(0)
+        self._uni_status.configure(text="Desempaquetando...", text_color=PURPLE)
+        
+        import threading
+        threading.Thread(target=self._unpack_worker, args=(params,), daemon=True).start()
+
+    def _unpack_worker(self, p: dict):
+        try:
+            from src.core.horizontal_unpacker import extract_horizontal_blocks
+            self._qlog("uni", "=== INICIO DESEMPAQUETADO HORIZONTAL ===")
+            
+            updates = extract_horizontal_blocks(
+                p["src_fp"], p["src_sheet"], p["blocks"], p["row_mapping"]
+            )
+            
+            self._qlog("uni", f"Extraidos {len(updates)} bloques/filas.")
+            self._q.put(("uni_progress", 0.5))
+            
+            from src.writers.sheets_writer import write_unpacked_blocks_to_sheets
+            self._qlog("uni", "Despachando batch a Google Sheets...")
+            
+            write_unpacked_blocks_to_sheets(
+                url=p["url"], creds=p["creds"],
+                updates=updates, col_dest=p["col_dest"]
+            )
+            
+            self._q.put(("uni_progress", 1.0))
+            self._qlog("uni", "¡Desempaquetado Exitoso!", "success")
+            self._q.put(("uni_finish", "Completado exitosamente"))
+            
+        except Exception as e:
+            self._qlog("uni", f"Error en Desempaquetador: {e}", "error")
+            self._q.put(("uni_finish", f"Error: {e}"))
 
     def _uni_worker(self, p: dict):
         try:

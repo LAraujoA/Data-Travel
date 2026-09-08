@@ -510,3 +510,55 @@ def write_range_to_sheets(
         "cells":   dest_coords,
         "detail":  detail,
     }
+
+
+def write_unpacked_blocks_to_sheets(
+    url: str,
+    creds: str,
+    updates: list[dict],
+    col_dest: list[str]
+):
+    """
+    Escribe los bloques desempaquetados a multiples hojas.
+    Utiliza spreadsheet.values_batch_update() para actualizar celdas en distintas hojas
+    con una sola solicitud HTTP.
+    
+    updates: [{"dest_sh": str, "dest_row": int, "values": [val1, val2, ...]}]
+    """
+    import gspread
+    spreadsheet_id = _extract_spreadsheet_id(url)
+    client = gspread.service_account(filename=creds)
+    spreadsheet = client.open_by_key(spreadsheet_id)
+    
+    data = []
+    for u in updates:
+        sh = u["dest_sh"]
+        r = u["dest_row"]
+        vals = u["values"]
+        
+        for i, val in enumerate(vals):
+            if i < len(col_dest):
+                col = col_dest[i]
+                a1 = f"'{sh}'!{col}{r}"
+                
+                # gspread values_batch_update requiere que los valores sean serializables
+                # Si openpyxl devuelve datetime u objetos raros, convertir a str o int/float.
+                import datetime
+                if isinstance(val, (datetime.datetime, datetime.date, datetime.time)):
+                    val = val.isoformat()
+                
+                data.append({
+                    "range": a1,
+                    "values": [[val]]
+                })
+                
+    if not data:
+        return
+        
+    body = {
+        "valueInputOption": "USER_ENTERED",
+        "data": data
+    }
+    
+    log.info(f"Enviando batch_update cruzado: {len(data)} celdas.")
+    spreadsheet.values_batch_update(body)
