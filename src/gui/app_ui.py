@@ -1819,13 +1819,20 @@ class DataTravelApp(ctk.CTk):
             
             self._q.put(("uni_progress", 1.0))
             self._qlog("uni", "¡Desempaquetado Exitoso!", "success")
-            self._q.put(("uni_done", "Completado exitosamente"))
+            self._q.put(("uni_done", {
+                "total": len(p["blocks"]),
+                "failed": [],
+                "unmatched": [],
+                "cells": len(updates) * len(p["col_dest"]),
+            }))
             
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
             self._qlog("uni", f"Error en Desempaquetador: {e}\n{tb}", "error")
-            self._q.put(("uni_done", f"Error: {e}"))
+            self._q.put(("uni_done", None))
+        finally:
+            self._uni_running = False
 
     def _uni_worker(self, p: dict):
         try:
