@@ -58,7 +58,7 @@ def scan_horizontal_blocks(fp: Path, src_sheet: str | None, id_row: int, col_sta
             "dest_sh": dest_sh,
             "score": score,
             "col_start": curr_col,
-            "col_end": curr_col + width - 1,
+            "col_end": curr_col + width,
             "id_row": id_row
         })
         
